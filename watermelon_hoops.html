@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watermelon Hoops</title>
+<meta name="description" content="Aim with arrows. Hold space to charge. Score = party. Miss = catastrophic produce.">
+<style>
+  :root {
+    --ink: #fff5e1;
+  }
+  * { box-sizing: border-box; user-select: none; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  body {
+    font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(180deg, #0b1c3a 0%, #2b1055 55%, #ff7e5f 100%);
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  .hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: 1rem 1.4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    pointer-events: none;
+    font-weight: 800;
+    text-shadow: 0 2px 8px #000a;
+    z-index: 10;
+  }
+  .hud .score { font-size: 1.6rem; }
+  .hud .score b { color: #ffbe0b; }
+  .hud .misses { font-size: 1.1rem; color: #ffb4c2; }
+  .hud .hint {
+    font-size: 0.9rem;
+    color: #fff9;
+    font-weight: 600;
+    font-style: italic;
+    text-align: right;
+    line-height: 1.5;
+  }
+  .hud kbd {
+    display: inline-block;
+    padding: 0.05em 0.45em;
+    border-radius: 5px;
+    background: #ffffff22;
+    border: 1px solid #ffffff44;
+    font: inherit;
+    font-style: normal;
+    font-weight: 700;
+    font-size: 0.85em;
+    color: #fff;
+  }
+  .banner {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.6);
+    font-size: clamp(3rem, 12vw, 8rem);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    color: #ffbe0b;
+    text-shadow:
+      0 0 30px #ff006e,
+      0 8px 0 #8338ec,
+      0 12px 40px #000;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    transition: opacity 0.3s, transform 0.5s cubic-bezier(.2,.9,.3,1.6);
+  }
+  .banner.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(-3deg);
+  }
+  .reset-btn {
+    position: fixed;
+    bottom: 1.2rem;
+    right: 1.2rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    border: 1.5px solid #ffffff44;
+    background: #00000055;
+    color: var(--ink);
+    font: 700 0.9rem/1 ui-rounded, system-ui, sans-serif;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    z-index: 10;
+    transition: transform .2s, background .2s;
+  }
+  .reset-btn:hover { background: #ff006e; transform: scale(1.05); }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div class="hud">
+  <div>
+    <div class="score">🏀 <b id="score">0</b> swishes</div>
+    <div class="misses">💥 <span id="misses">0</span> juicy disasters</div>
+  </div>
+  <div class="hint">
+    <kbd>←</kbd> <kbd>→</kbd> aim · <kbd>↑</kbd> <kbd>↓</kbd> fine-tune<br>
+    hold <kbd>Space</kbd> to charge · release to fire
+  </div>
+</div>
+
+<div class="banner" id="banner"></div>
+<button class="reset-btn" id="reset">↻ reset</button>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const missesEl = document.getElementById('misses');
+  const banner = document.getElementById('banner');
+  const resetBtn = document.getElementById('reset');
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    layoutScene();
+  }
+  window.addEventListener('resize', resize);
+
+  // Scene
+  const G = 1400;     // gravity px/s^2
+  const GROUND_Y = () => H - 60;
+  const launcher = { x: 0, y: 0, r: 26 };
+  const hoop = { x: 0, y: 0, r: 52, rimT: 6, bbW: 14, bbH: 120, facing: 1 };
+  // facing: +1 => backboard on right (opening faces left)
+  //         -1 => backboard on left  (opening faces right)
+  let score = 0, misses = 0;
+
+  // Aim & charge
+  let aim = -Math.PI / 4; // up-right
+  let power = 0;          // 0..1
+  let charging = false;
+  const POWER_RATE = 0.85;      // per second (so full charge ~1.17s)
+  const MAX_POWER_SPEED = 1900; // px/s at full charge
+  const MIN_POWER_SPEED = 350;  // minimal at near-zero
+  const AIM_RATE = 1.6;         // rad/s while holding arrow
+  const AIM_FINE_RATE = 0.5;    // rad/s for up/down fine adjust
+  const keys = { left: false, right: false, up: false, down: false };
+
+  function layoutScene() {
+    placeHoopRandom();
+    placeLauncherRandom();
+  }
+  function placeHoopRandom() {
+    const margin = 100;
+    hoop.x = margin + Math.random() * (W - margin * 2);
+    hoop.y = H * (0.22 + Math.random() * 0.38);
+    // Keep clear of edges
+    hoop.x = Math.max(hoop.r + 60, Math.min(W - hoop.r - hoop.bbW - 30, hoop.x));
+  }
+  function placeLauncherRandom() {
+    for (let i = 0; i < 80; i++) {
+      const x = 60 + Math.random() * (W - 120);
+      const y = 120 + Math.random() * (GROUND_Y() - 200);
+      // Avoid being right on top of hoop
+      if (Math.hypot(x - hoop.x, y - hoop.y) < 260) continue;
+      launcher.x = x;
+      launcher.y = y;
+      orientHoopToLauncher();
+      // Randomize starting aim so each spawn isn't predictable
+      const toHoopAng = Math.atan2(hoop.y - launcher.y, hoop.x - launcher.x);
+      aim = toHoopAng - 0.6 - Math.random() * 0.6; // aim above the hoop
+      return;
+    }
+    launcher.x = 100;
+    launcher.y = GROUND_Y() - 100;
+    orientHoopToLauncher();
+  }
+
+  // Backboard sits on the side away from the launcher, so the rim opening always
+  // faces the player.
+  function orientHoopToLauncher() {
+    hoop.facing = launcher.x < hoop.x ? 1 : -1;
+    // Re-clamp hoop so the backboard doesn't get pushed off-screen
+    const bbExtra = hoop.bbW + 30;
+    if (hoop.facing === 1) {
+      hoop.x = Math.min(hoop.x, W - hoop.r - bbExtra);
+    } else {
+      hoop.x = Math.max(hoop.x, hoop.r + bbExtra);
+    }
+  }
+
+  function backboardX() {
+    return hoop.facing === 1
+      ? hoop.x + hoop.r + 4
+      : hoop.x - hoop.r - 4 - hoop.bbW;
+  }
+
+  // State
+  let melon = null;
+  let chunks = [];
+  let seeds = [];
+  let juice = [];
+  let confetti = [];
+  let stars = [];
+  let lastT = performance.now();
+  let cooldown = 0; // brief pause after explosion before respawning launcher
+
+  function initStars() {
+    stars = [];
+    for (let i = 0; i < 80; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.7,
+        r: Math.random() * 1.4 + 0.3,
+        tw: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  // --- input ---
+  window.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    if (e.code === 'ArrowLeft')  { keys.left = true;  e.preventDefault(); }
+    if (e.code === 'ArrowRight') { keys.right = true; e.preventDefault(); }
+    if (e.code === 'ArrowUp')    { keys.up = true;    e.preventDefault(); }
+    if (e.code === 'ArrowDown')  { keys.down = true;  e.preventDefault(); }
+    if (e.code === 'Space') {
+      if (!melon && cooldown <= 0 && !charging) {
+        charging = true;
+        power = 0;
+      }
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', e => {
+    if (e.code === 'ArrowLeft')  keys.left = false;
+    if (e.code === 'ArrowRight') keys.right = false;
+    if (e.code === 'ArrowUp')    keys.up = false;
+    if (e.code === 'ArrowDown')  keys.down = false;
+    if (e.code === 'Space') {
+      if (charging) {
+        charging = false;
+        if (power > 0.05) fire();
+        power = 0;
+      }
+      e.preventDefault();
+    }
+  });
+
+  function fire() {
+    const speed = MIN_POWER_SPEED + (MAX_POWER_SPEED - MIN_POWER_SPEED) * power;
+    melon = {
+      x: launcher.x,
+      y: launcher.y,
+      vx: Math.cos(aim) * speed,
+      vy: Math.sin(aim) * speed,
+      r: 22,
+      rot: 0,
+      vrot: (Math.random() - 0.5) * 8 + (Math.cos(aim) > 0 ? 6 : -6),
+      alive: true,
+    };
+  }
+
+  resetBtn.addEventListener('click', () => {
+    score = 0; misses = 0;
+    scoreEl.textContent = '0';
+    missesEl.textContent = '0';
+    melon = null; chunks = []; seeds = []; juice = []; confetti = [];
+    charging = false; power = 0; cooldown = 0;
+    placeHoopRandom();
+    placeLauncherRandom();
+    flashBanner('');
+  });
+  // Don't let the reset button steal focus and break Space
+  resetBtn.addEventListener('mousedown', e => e.preventDefault());
+
+  // --- physics + collision ---
+  function step(dt) {
+    if (cooldown > 0) cooldown -= dt;
+
+    if (!melon) {
+      // Aim controls (only when not flying)
+      if (keys.left)  aim -= AIM_RATE * dt;
+      if (keys.right) aim += AIM_RATE * dt;
+      if (keys.up)    aim -= AIM_FINE_RATE * dt;
+      if (keys.down)  aim += AIM_FINE_RATE * dt;
+      if (charging) {
+        power = Math.min(1, power + POWER_RATE * dt);
+      }
+    }
+
+    if (melon && melon.alive) {
+      melon.vy += G * dt;
+      melon.x += melon.vx * dt;
+      melon.y += melon.vy * dt;
+      melon.rot += melon.vrot * dt;
+
+      // Pass through hoop ring
+      const hl = hoop.x - hoop.r, hr = hoop.x + hoop.r;
+      const inX = melon.x > hl + 6 && melon.x < hr - 6;
+      const crossY = melon.y >= hoop.y && (melon.y - melon.vy * dt) < hoop.y;
+      if (inX && crossY && melon.vy > 0) {
+        scoreSwish();
+        return;
+      }
+
+      // Rim bounce (each rim end is a small circle)
+      for (const rim of [{ x: hl, y: hoop.y }, { x: hr, y: hoop.y }]) {
+        const dx = melon.x - rim.x;
+        const dy = melon.y - rim.y;
+        const d = Math.hypot(dx, dy);
+        const min = melon.r + hoop.rimT;
+        if (d < min) {
+          const nx = dx / (d || 1);
+          const ny = dy / (d || 1);
+          melon.x = rim.x + nx * (min + 0.1);
+          melon.y = rim.y + ny * (min + 0.1);
+          const vDotN = melon.vx * nx + melon.vy * ny;
+          if (vDotN < 0) {
+            melon.vx -= 2 * vDotN * nx;
+            melon.vy -= 2 * vDotN * ny;
+            melon.vx *= 0.55;
+            melon.vy *= 0.55;
+            melon.vrot += (Math.random() - 0.5) * 8;
+          }
+        }
+      }
+
+      // Backboard bounce
+      const bbX = backboardX();
+      const bbR = bbX + hoop.bbW;
+      const bbTop = hoop.y - hoop.bbH * 0.7;
+      const bbBot = hoop.y + hoop.bbH * 0.3;
+      if (melon.x + melon.r > bbX && melon.x - melon.r < bbR &&
+          melon.y > bbTop && melon.y < bbBot) {
+        if (hoop.facing === 1) {
+          melon.x = bbX - melon.r - 0.1;
+        } else {
+          melon.x = bbR + melon.r + 0.1;
+        }
+        if (melon.vx * (hoop.facing) > 0) {
+          melon.vx = -melon.vx * 0.45;
+          melon.vy *= 0.75;
+          melon.vrot *= 0.6;
+        }
+      }
+
+      // Ground
+      if (melon.y + melon.r >= GROUND_Y()) {
+        explodeMelon();
+        return;
+      }
+      // Off-screen
+      if (melon.x < -150 || melon.x > W + 150 || melon.y > H + 200) {
+        melon = null;
+        cooldown = 0.4;
+      }
+    }
+
+    // chunks
+    for (const c of chunks) {
+      c.vy += G * 0.8 * dt;
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      c.rot += c.vrot * dt;
+      c.life -= dt;
+      if (c.y > GROUND_Y() - 4) {
+        c.y = GROUND_Y() - 4;
+        c.vy *= -0.35;
+        c.vx *= 0.7;
+        if (Math.abs(c.vy) < 30) c.vy = 0;
+      }
+    }
+    chunks = chunks.filter(c => c.life > 0);
+
+    for (const s of seeds) {
+      s.vy += G * 0.9 * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.rot += s.vrot * dt;
+      s.life -= dt;
+      if (s.y > GROUND_Y() - 2) {
+        s.y = GROUND_Y() - 2;
+        s.vy *= -0.3; s.vx *= 0.6;
+      }
+    }
+    seeds = seeds.filter(s => s.life > 0);
+
+    for (const j of juice) {
+      j.vy += G * 0.5 * dt;
+      j.x += j.vx * dt;
+      j.y += j.vy * dt;
+      j.life -= dt;
+      j.r *= (1 - dt * 0.4);
+    }
+    juice = juice.filter(j => j.life > 0 && j.r > 0.5);
+
+    for (const c of confetti) {
+      c.vy += G * 0.3 * dt;
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      c.rot += c.vrot * dt;
+      c.life -= dt;
+    }
+    confetti = confetti.filter(c => c.life > 0);
+  }
+
+  function scoreSwish() {
+    score++;
+    scoreEl.textContent = score;
+    melon = null;
+    cooldown = 0.6;
+    partyTime();
+    flashBanner(pickCelebration());
+    setTimeout(() => {
+      placeHoopRandom();
+      placeLauncherRandom();
+    }, 700);
+  }
+
+  function explodeMelon() {
+    if (!melon) return;
+    misses++;
+    missesEl.textContent = misses;
+    const mx = melon.x, my = melon.y, mvx = melon.vx, mvy = melon.vy;
+    melon = null;
+    cooldown = 0.7;
+    const N_CHUNKS = 260;
+    const N_SEEDS = 180;
+    const N_JUICE = 80;
+    for (let i = 0; i < N_CHUNKS; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 80 + Math.random() * 720;
+      chunks.push({
+        x: mx + (Math.random() - 0.5) * 10,
+        y: my + (Math.random() - 0.5) * 10,
+        vx: mvx * 0.15 + Math.cos(a) * sp,
+        vy: mvy * 0.15 + Math.sin(a) * sp - 100,
+        size: 3 + Math.random() * 10,
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 14,
+        kind: Math.random() < 0.7 ? 'flesh' : 'rind',
+        life: 2.5 + Math.random() * 2.5,
+      });
+    }
+    for (let i = 0; i < N_SEEDS; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 100 + Math.random() * 600;
+      seeds.push({
+        x: mx, y: my,
+        vx: mvx * 0.2 + Math.cos(a) * sp,
+        vy: mvy * 0.2 + Math.sin(a) * sp - 80,
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 18,
+        life: 2 + Math.random() * 2,
+      });
+    }
+    for (let i = 0; i < N_JUICE; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 500;
+      juice.push({
+        x: mx, y: my,
+        vx: mvx * 0.1 + Math.cos(a) * sp,
+        vy: mvy * 0.1 + Math.sin(a) * sp - 60,
+        r: 4 + Math.random() * 12,
+        life: 1.2 + Math.random() * 1.4,
+      });
+    }
+    flashBanner(pickFailure());
+    screenShake(18, 0.45);
+  }
+
+  function partyTime() {
+    const colors = ['#ff006e', '#ffbe0b', '#8338ec', '#3a86ff', '#06ffa5', '#fb5607', '#ff70a6'];
+    for (let i = 0; i < 400; i++) {
+      confetti.push({
+        x: hoop.x + (Math.random() - 0.5) * 60,
+        y: hoop.y + (Math.random() - 0.5) * 20,
+        vx: (Math.random() - 0.5) * 700,
+        vy: -200 - Math.random() * 600,
+        size: 4 + Math.random() * 8,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 14,
+        kind: Math.random() < 0.4 ? 'circle' : 'rect',
+        life: 2.4 + Math.random() * 2.0,
+      });
+    }
+  }
+
+  const CELEBRATIONS = ['SWISH!', 'BUCKETS!', 'COLD!', 'NICE!', 'KOBE!', '🎉 PARTY!', 'FRUITY!', 'JUICY!'];
+  const FAILURES = ['SPLAT!', 'OOF!', 'YIKES!', '💥 BOOM!', 'BRICK!', 'TRAGIC!', 'RIP MELON', 'JUICE EVERYWHERE'];
+  function pickCelebration() { return CELEBRATIONS[Math.floor(Math.random() * CELEBRATIONS.length)]; }
+  function pickFailure() { return FAILURES[Math.floor(Math.random() * FAILURES.length)]; }
+  let bannerTimer = null;
+  function flashBanner(text) {
+    if (!text) { banner.classList.remove('show'); return; }
+    banner.textContent = text;
+    banner.classList.add('show');
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => banner.classList.remove('show'), 1100);
+  }
+
+  let shakeAmt = 0, shakeT = 0;
+  function screenShake(a, t) { shakeAmt = a; shakeT = t; }
+
+  // --- rendering ---
+  function draw() {
+    let ox = 0, oy = 0;
+    if (shakeT > 0) {
+      ox = (Math.random() - 0.5) * shakeAmt;
+      oy = (Math.random() - 0.5) * shakeAmt;
+    }
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(ox, oy);
+
+    drawStars();
+    drawGround();
+    drawHoop();
+    drawLauncher();
+    drawAimAndPreview();
+    drawPowerMeter();
+    drawMelon();
+    drawChunks();
+    drawSeeds();
+    drawJuice();
+    drawConfetti();
+
+    ctx.restore();
+  }
+
+  function drawStars() {
+    for (const s of stars) {
+      const a = 0.45 + 0.45 * Math.sin(s.tw);
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawGround() {
+    const gy = GROUND_Y();
+    const grad = ctx.createLinearGradient(0, gy, 0, H);
+    grad.addColorStop(0, '#2a0d1a');
+    grad.addColorStop(1, '#0a0410');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, gy, W, H - gy);
+    ctx.strokeStyle = '#ff006e88';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(W, gy);
+    ctx.stroke();
+  }
+
+  function drawLauncher() {
+    const x = launcher.x, y = launcher.y;
+    // little floating pad/cloud
+    ctx.fillStyle = '#ffffff22';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 22, 44, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff44';
+    ctx.beginPath();
+    ctx.ellipse(x - 8, y + 19, 28, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // y-fork
+    ctx.strokeStyle = '#5b3a22';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 5, y + 10);
+    ctx.lineTo(x - 22, y - 12);
+    ctx.moveTo(x + 5, y + 10);
+    ctx.lineTo(x + 22, y - 12);
+    ctx.moveTo(x, y + 10);
+    ctx.lineTo(x, y + 22);
+    ctx.stroke();
+    // band
+    ctx.strokeStyle = '#8b5a3c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 22, y - 12);
+    ctx.lineTo(x + 22, y - 12);
+    ctx.stroke();
+    // melon sitting
+    if (!melon) drawWatermelon(x, y - 4, 22, 0);
+  }
+
+  function drawAimAndPreview() {
+    if (melon) return;
+    const x = launcher.x, y = launcher.y - 4;
+    // Aim arrow
+    const len = 55 + power * 35;
+    const ax = x + Math.cos(aim) * len;
+    const ay = y + Math.sin(aim) * len;
+    ctx.strokeStyle = charging ? '#ffbe0b' : '#ffffffcc';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(ax, ay);
+    ctx.stroke();
+    // arrowhead
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(aim);
+    ctx.fillStyle = charging ? '#ffbe0b' : '#ffffffcc';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-10, -6);
+    ctx.lineTo(-10, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Short trajectory preview (only a few dots so it doesn't give away the landing)
+    const speed = MIN_POWER_SPEED + (MAX_POWER_SPEED - MIN_POWER_SPEED) * power;
+    let px = x, py = y;
+    let pvx = Math.cos(aim) * speed;
+    let pvy = Math.sin(aim) * speed;
+    const dt = 0.035;
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      pvy += G * dt;
+      px += pvx * dt;
+      py += pvy * dt;
+      const a = (1 - i / N) * 0.75;
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(px, py, 3.2 - i * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawPowerMeter() {
+    if (melon) return;
+    const x = launcher.x, y = launcher.y;
+    const w = 70, h = 8;
+    const px = x - w / 2, py = y + 38;
+    ctx.fillStyle = '#00000077';
+    ctx.fillRect(px - 2, py - 2, w + 4, h + 4);
+    ctx.fillStyle = '#ffffff22';
+    ctx.fillRect(px, py, w, h);
+    const grad = ctx.createLinearGradient(px, 0, px + w, 0);
+    grad.addColorStop(0, '#06ffa5');
+    grad.addColorStop(0.6, '#ffbe0b');
+    grad.addColorStop(1, '#ff006e');
+    ctx.fillStyle = grad;
+    ctx.fillRect(px, py, w * power, h);
+    if (charging) {
+      ctx.strokeStyle = '#ffbe0b';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(px - 1, py - 1, w + 2, h + 2);
+    }
+  }
+
+  function drawWatermelon(x, y, r, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.fillStyle = '#0e6b1f';
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#7ed957';
+    ctx.lineWidth = Math.max(2, r * 0.18);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.85, a - 0.15, a + 0.15);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = '#e9ffd6';
+    ctx.lineWidth = Math.max(1.5, r * 0.10);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ff5a7e';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1c0a0a';
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + 0.4;
+      const sx = Math.cos(a) * r * 0.35;
+      const sy = Math.sin(a) * r * 0.35;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.09, r * 0.05, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = '#ffffff55';
+    ctx.beginPath();
+    ctx.arc(-r * 0.35, -r * 0.35, r * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawMelon() {
+    if (!melon) return;
+    drawWatermelon(melon.x, melon.y, melon.r, melon.rot);
+  }
+
+  function drawHoop() {
+    const x = hoop.x, y = hoop.y;
+    const bbX = backboardX();
+    // Pole on the outer edge of the backboard (away from rim)
+    const poleX = hoop.facing === 1 ? bbX + hoop.bbW - 4 : bbX - 2;
+    ctx.fillStyle = '#444';
+    ctx.fillRect(poleX, y - 8, 6, GROUND_Y() - (y - 8));
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(bbX, y - hoop.bbH * 0.7, hoop.bbW, hoop.bbH);
+    ctx.fillStyle = '#ff006e';
+    ctx.fillRect(bbX, y - hoop.bbH * 0.2, hoop.bbW, 4);
+    ctx.strokeStyle = '#ff006e';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bbX + 2, y - 18, hoop.bbW - 4, 24);
+
+    ctx.strokeStyle = '#ff5a3a';
+    ctx.lineWidth = hoop.rimT * 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - hoop.r, y);
+    ctx.lineTo(x + hoop.r, y);
+    ctx.stroke();
+    ctx.fillStyle = '#ff5a3a';
+    ctx.beginPath(); ctx.arc(x - hoop.r, y, hoop.rimT, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + hoop.r, y, hoop.rimT, 0, Math.PI * 2); ctx.fill();
+
+    ctx.strokeStyle = '#ffffffcc';
+    ctx.lineWidth = 1.2;
+    const netH = 36;
+    const segs = 9;
+    for (let i = 0; i <= segs; i++) {
+      const tx = x - hoop.r + (i / segs) * hoop.r * 2;
+      const bx = x - hoop.r * 0.6 + (i / segs) * hoop.r * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(tx, y);
+      ctx.lineTo(bx, y + netH);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 4; i++) {
+      const yy = y + ((i + 1) / 5) * netH;
+      const k = (i + 1) / 5;
+      const lx = x - hoop.r + (hoop.r * 0.4) * k;
+      const rx = x + hoop.r - (hoop.r * 0.4) * k;
+      ctx.beginPath();
+      ctx.moveTo(lx, yy);
+      ctx.lineTo(rx, yy);
+      ctx.stroke();
+    }
+  }
+
+  function drawChunks() {
+    for (const c of chunks) {
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.rot);
+      const alpha = Math.min(1, c.life / 1.5);
+      ctx.globalAlpha = alpha;
+      if (c.kind === 'flesh') {
+        ctx.fillStyle = '#ff5a7e';
+      } else {
+        ctx.fillStyle = Math.random() < 0.5 ? '#0e6b1f' : '#7ed957';
+      }
+      ctx.beginPath();
+      ctx.moveTo(-c.size, 0);
+      ctx.lineTo(0, -c.size * 0.7);
+      ctx.lineTo(c.size, 0);
+      ctx.lineTo(0, c.size * 0.6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawSeeds() {
+    ctx.fillStyle = '#1c0a0a';
+    for (const s of seeds) {
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.rot);
+      ctx.globalAlpha = Math.min(1, s.life / 1.5);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 3, 1.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawJuice() {
+    for (const j of juice) {
+      ctx.globalAlpha = Math.min(0.6, j.life / 2);
+      ctx.fillStyle = '#ff3366';
+      ctx.beginPath();
+      ctx.arc(j.x, j.y, j.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawConfetti() {
+    for (const c of confetti) {
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.rot);
+      ctx.globalAlpha = Math.min(1, c.life / 1.5);
+      ctx.fillStyle = c.color;
+      if (c.kind === 'rect') {
+        ctx.fillRect(-c.size / 2, -c.size / 4, c.size, c.size / 2);
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, c.size * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function loop(t) {
+    const dt = Math.min(0.033, (t - lastT) / 1000);
+    lastT = t;
+    for (const s of stars) s.tw += dt * 2;
+    if (shakeT > 0) {
+      shakeT -= dt;
+      shakeAmt *= 0.92;
+      if (shakeT <= 0) { shakeAmt = 0; shakeT = 0; }
+    }
+    step(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  initStars();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+<!-- games:back-button -->
+<a href="index.html" id="games-home-btn" aria-label="Back to games index"><span aria-hidden="true">←</span> Home</a>
+<style>
+  #games-home-btn {
+    position: fixed; top: 1rem; left: 1rem; z-index: 99999;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.95rem; border-radius: 999px;
+    background: rgba(0,0,0,0.55); color: #fff;
+    font: 700 0.9rem/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+    text-decoration: none; border: 1px solid rgba(255,255,255,0.25);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: transform .2s cubic-bezier(.2,.9,.3,1.4), background .2s, box-shadow .2s;
+  }
+  #games-home-btn:hover {
+    transform: translateX(-4px) scale(1.05);
+    background: linear-gradient(135deg, #ff006e, #8338ec);
+    box-shadow: 0 8px 24px rgba(255,0,110,.45);
+  }
+  #games-home-btn span { font-size: 1.15rem; line-height: 1; }
+</style>
+</body>
+</html>
