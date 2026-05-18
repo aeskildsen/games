@@ -374,7 +374,7 @@ html = f"""<!DOCTYPE html>
   <h1 id="title" aria-label="Games"></h1>
   <p class="tagline" id="tagline">loading vibes…</p>
   <div class="stats">
-    <b id="count">{len(cards)}</b> game{("" if len(cards) == 1 else "s")} · all in one <code>.html</code> each · pure chaos
+    <b id="count">{len(cards)}</b> game{("" if len(cards) == 1 else "s")} · pure chaos
   </div>
 </header>
 
