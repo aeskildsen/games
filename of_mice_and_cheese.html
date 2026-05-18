@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Of mice and cheese</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #1a1a2e;
+    color: #eee;
+    font-family: system-ui, -apple-system, sans-serif;
+    height: 100%;
+    overflow: hidden;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  #hud {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 8px;
+    font-size: 18px;
+    align-items: center;
+  }
+  #hud .pill {
+    background: #2a2a44;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid #444;
+  }
+  #healthBar {
+    width: 160px;
+    height: 14px;
+    background: #2a2a44;
+    border: 1px solid #444;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  #healthFill {
+    height: 100%;
+    background: linear-gradient(90deg, #ff5a5a, #5aff8c);
+    transition: width 120ms linear;
+  }
+  canvas {
+    background: #2d3b2d;
+    border: 4px solid #444;
+    border-radius: 8px;
+    display: block;
+    image-rendering: pixelated;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.75);
+    z-index: 10;
+  }
+  #overlay.show { display: flex; }
+  #panel {
+    background: #1f2040;
+    border: 2px solid #555;
+    border-radius: 12px;
+    padding: 28px 36px;
+    text-align: center;
+    max-width: 440px;
+  }
+  #panel h1 { margin: 0 0 10px; font-size: 28px; }
+  #panel p { margin: 8px 0; line-height: 1.5; }
+  button {
+    background: #4a6fff;
+    color: white;
+    border: none;
+    padding: 10px 22px;
+    font-size: 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+  button:hover { background: #5a7fff; }
+  .hint { color: #aaa; font-size: 13px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div class="pill">Level <span id="lvl">1</span></div>
+    <div class="pill">Cheese <span id="score">0</span></div>
+    <div class="pill" style="display:flex; gap:8px; align-items:center;">
+      HP <div id="healthBar"><div id="healthFill" style="width:100%"></div></div>
+    </div>
+  </div>
+  <canvas id="game" width="720" height="480"></canvas>
+  <div class="hint">Arrow keys / WASD to move. Eat cheese, avoid cats, traps, and lava. Level 5 is different — listen carefully.</div>
+</div>
+
+<div id="overlay" class="show">
+  <div id="panel">
+    <h1 id="title">Of mice and cheese</h1>
+    <p id="msg">You are a mouse. Eat cheese to gain health, score, and a brief speed boost. Cats drain your HP, traps freeze you in place, and lava burns. Collect 8 cheeses per level to advance.</p>
+    <p style="color:#aaa; font-size:13px;">L1: 1 cat &nbsp;|&nbsp; L2: 2 cats &nbsp;|&nbsp; L3: 3 mouse-speed cats &nbsp;|&nbsp; L4: 4 cats + winged lion + lava &nbsp;|&nbsp; L5: ?</p>
+    <button id="startBtn">Start Game</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const lvlEl = document.getElementById('lvl');
+  const scoreEl = document.getElementById('score');
+  const healthFill = document.getElementById('healthFill');
+  const overlay = document.getElementById('overlay');
+  const title = document.getElementById('title');
+  const msg = document.getElementById('msg');
+  const startBtn = document.getElementById('startBtn');
+
+  const CHEESE_TO_ADVANCE = 8;
+
+  const state = {
+    level: 1,
+    score: 0,
+    health: 100,
+    running: false,
+    mouse: null,
+    cats: [],
+    cheeses: [],
+    traps: [],
+    lavas: [],
+    keys: {},
+    catCooldown: 0,
+    trapCooldown: 0,
+    boost: 0,
+    stuck: 0,
+    cutscene: null,
+  };
+
+  const STUCK_FRAMES = 40;
+  const MAX_LEVEL = 5;
+  const MEDITATION_FRAMES = 30 * 60; // 30 seconds at 60fps
+
+  const BASE_SPEED = 3.2;
+  const BOOST_SPEED = 5.2;
+  const BOOST_FRAMES = 35;
+
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function dist(a, b) {
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.hypot(dx, dy);
+  }
+
+  const stars = Array.from({ length: 160 }, () => ({
+    x: rand(0, W), y: rand(0, H), z: rand(0.3, 1),
+  }));
+
+  // --- Cowbell synth (classic two-square-wave 808-ish ding) ---
+  let audioCtx = null;
+  function getAudio() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (e) { audioCtx = null; }
+    }
+    return audioCtx;
+  }
+  function playCowbell(volume = 0.35) {
+    const ac = getAudio();
+    if (!ac) return;
+    const t0 = ac.currentTime;
+    const mix = ac.createGain();
+    mix.gain.value = volume;
+    mix.connect(ac.destination);
+    const env = ac.createGain();
+    env.gain.setValueAtTime(1, t0);
+    env.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
+    env.connect(mix);
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = 800;
+    filt.Q.value = 1.2;
+    filt.connect(env);
+    [540, 800].forEach(freq => {
+      const o = ac.createOscillator();
+      o.type = 'square';
+      o.frequency.value = freq;
+      o.connect(filt);
+      o.start(t0);
+      o.stop(t0 + 0.4);
+    });
+  }
+  let cowbellTimer = null;
+  function startCowbellLoop() {
+    stopCowbellLoop();
+    let beat = 0;
+    // ~120bpm "don't fear the reaper" pattern: 1, 2-and, 3, 4-and
+    const pattern = [1, 0, 0, 1, 1, 0, 0, 1];
+    cowbellTimer = setInterval(() => {
+      if (pattern[beat % pattern.length]) playCowbell(0.4);
+      beat++;
+    }, 180);
+  }
+  function stopCowbellLoop() {
+    if (cowbellTimer) { clearInterval(cowbellTimer); cowbellTimer = null; }
+  }
+
+  function spawnCheese() {
+    for (let tries = 0; tries < 40; tries++) {
+      const c = { x: rand(30, W - 30), y: rand(30, H - 30), r: 10 };
+      if (state.mouse && dist(c, state.mouse) < 60) continue;
+      if (state.cats.some(ct => dist(c, ct) < 80)) continue;
+      if (state.traps.some(t => dist(c, t) < 40)) continue;
+      if (state.lavas.some(l => dist(c, l) < l.r + 20)) continue;
+      return c;
+    }
+    return { x: rand(30, W - 30), y: rand(30, H - 30), r: 10 };
+  }
+
+  function spawnTrap() {
+    for (let tries = 0; tries < 40; tries++) {
+      const t = { x: rand(40, W - 40), y: rand(40, H - 40), r: 14 };
+      if (state.mouse && dist(t, state.mouse) < 100) continue;
+      if (state.cheeses.some(c => dist(t, c) < 40)) continue;
+      if (state.traps.some(tt => dist(t, tt) < 50)) continue;
+      if (state.lavas.some(l => dist(t, l) < l.r + 30)) continue;
+      return t;
+    }
+    return null;
+  }
+
+  function spawnLava() {
+    for (let tries = 0; tries < 60; tries++) {
+      const r = rand(22, 34);
+      const l = { x: rand(r + 20, W - r - 20), y: rand(r + 20, H - r - 20), r };
+      if (state.mouse && dist(l, state.mouse) < 140) continue;
+      if (state.cheeses.some(c => dist(l, c) < r + 30)) continue;
+      if (state.traps.some(t => dist(l, t) < r + 30)) continue;
+      if (state.lavas.some(ll => dist(l, ll) < r + ll.r + 20)) continue;
+      return l;
+    }
+    return null;
+  }
+
+  function startLevel(lvl) {
+    state.level = lvl;
+    state.score = 0;
+    state.cheeses = [];
+    state.traps = [];
+    state.lavas = [];
+    state.mouse = { x: 60, y: H / 2, r: 12, speed: BASE_SPEED };
+    const catSpeed = lvl === 1 ? 1.3 : lvl === 2 ? 2.1 : BASE_SPEED;
+    const catCount = lvl === 4 ? 4 : lvl;
+    state.cats = [];
+    for (let i = 0; i < catCount; i++) {
+      const t = (i + 1) / (catCount + 1);
+      state.cats.push({
+        type: 'cat',
+        x: W - 60,
+        y: H * t,
+        r: 18,
+        speed: catSpeed,
+        damage: 18,
+      });
+    }
+    if (lvl === 4) {
+      state.cats.push({
+        type: 'lion',
+        x: W / 2,
+        y: 60,
+        r: 26,
+        speed: BASE_SPEED + 0.4,
+        damage: 32,
+      });
+    }
+    state.catCooldown = 0;
+    state.trapCooldown = 0;
+    state.boost = 0;
+    state.stuck = 0;
+    state.meditation = null;
+
+    if (lvl === 5) {
+      // Meditation trap: stationary peaceful lion, one tempting big cheese.
+      state.cats = [{
+        type: 'lion',
+        x: W / 2 + 40,
+        y: H / 2,
+        r: 30,
+        speed: 0,
+        damage: 0,
+        meditating: true,
+      }];
+      state.cheeses = [{ x: W / 2 - 50, y: H / 2, r: 22, big: true }];
+      state.trapPlan = null;
+      state.meditation = { time: 0, duration: MEDITATION_FRAMES };
+      state.mouse.x = 80;
+      state.mouse.y = H / 2;
+      lvlEl.textContent = lvl;
+      scoreEl.textContent = 0;
+      state.health = 100;
+      updateHealth();
+      return;
+    }
+
+    const cheeseOnField = lvl === 4 ? 7 : 5;
+    for (let i = 0; i < cheeseOnField; i++) state.cheeses.push(spawnCheese());
+    // Traps spawn dynamically over time; level sets initial count, cap, and cadence.
+    const trapPlan = lvl === 1
+      ? { start: 1, cap: 4,  intervalFrames: 360 }
+      : lvl === 2
+      ? { start: 3, cap: 8,  intervalFrames: 240 }
+      : lvl === 3
+      ? { start: 5, cap: 14, intervalFrames: 180 }
+      :              { start: 6, cap: 16, intervalFrames: 150 };
+    if (lvl === 4) {
+      for (let i = 0; i < 6; i++) {
+        const l = spawnLava();
+        if (l) state.lavas.push(l);
+      }
+    }
+    for (let i = 0; i < trapPlan.start; i++) {
+      const t = spawnTrap();
+      if (t) state.traps.push(t);
+    }
+    state.trapPlan = trapPlan;
+    state.trapSpawnTimer = trapPlan.intervalFrames;
+    lvlEl.textContent = lvl;
+    scoreEl.textContent = 0;
+    state.health = 100;
+    updateHealth();
+  }
+
+  function updateHealth() {
+    healthFill.style.width = Math.max(0, state.health) + '%';
+  }
+
+  function showOverlay(t, m, btn) {
+    title.textContent = t;
+    msg.textContent = m;
+    startBtn.textContent = btn;
+    overlay.classList.add('show');
+  }
+  function hideOverlay() { overlay.classList.remove('show'); }
+
+  function gameOver(won) {
+    state.running = false;
+    if (won) {
+      showOverlay('You Win!', `You made it. Cheese count: ${state.score}.`, 'Play Again');
+      state.level = 1;
+    } else {
+      showOverlay('Caught!', `Got you on level ${state.level}. You collected ${state.score} cheese this run.`, 'Try Again');
+    }
+  }
+
+  function cheeseOverdose() {
+    state.running = false;
+    state.meditation = null;
+    showOverlay(
+      'Cheese Overdose',
+      'You couldn\'t resist. The lion sighs, deeply disappointed. Your tiny mouse heart could not handle that much cheese.',
+      'Try Again'
+    );
+    state.level = 5;
+  }
+
+  function nextLevel() {
+    if (state.level >= MAX_LEVEL) {
+      startWinCutscene();
+    } else {
+      const next = state.level + 1;
+      state.running = false;
+      const intro = next === 2
+        ? 'Two cats now — and more traps on the floor. Cheese gives a brief speed boost.'
+        : next === 3
+        ? 'Three cats — as fast as you — and the floor is paved with traps. Good luck.'
+        : next === 4
+        ? 'Four cats, lava pits, and a winged lion. Cheese heals more here — you\'ll need it.'
+        : 'The winged lion sits in peaceful meditation. A single piece of cheese rests between you. Sit with it. Do not move. Do not eat. 30 seconds.';
+      showOverlay(`Level ${next}`, intro, 'Start Level ' + next);
+      state.level = next;
+    }
+  }
+
+  // Win cutscene: ship descends, mouse boards, warp, arrive in new galaxy.
+  // Phases (frames): descend 90, board 60, ascend 60, warp 130, arrive 180
+  const CS = {
+    descend: 90,
+    board:   60,
+    ascend:  60,
+    warp:    130,
+    arrive:  180,
+  };
+
+  function startWinCutscene() {
+    state.running = false;
+    startCowbellLoop();
+    state.cutscene = {
+      phase: 'descend',
+      t: 0,
+      shipX: W / 2,
+      shipY: -80,
+      mouseInShip: false,
+      warpStars: Array.from({ length: 120 }, () => ({
+        x: rand(-W/2, W/2), y: rand(-H/2, H/2), z: rand(0.1, 1),
+      })),
+      arriveStars: Array.from({ length: 80 }, () => ({
+        x: rand(0, W), y: rand(0, H), r: rand(0.4, 1.6),
+      })),
+    };
+  }
+
+  function updateCutscene() {
+    const cs = state.cutscene;
+    cs.t++;
+    const m = state.mouse;
+    if (cs.phase === 'descend') {
+      const targetY = H * 0.35;
+      cs.shipY += (targetY - cs.shipY) * 0.06;
+      // mouse jogs toward beam point
+      const beamX = cs.shipX;
+      const dx = beamX - m.x;
+      if (Math.abs(dx) > 1) m.x += Math.sign(dx) * Math.min(2.4, Math.abs(dx));
+      if (cs.t >= CS.descend) { cs.phase = 'board'; cs.t = 0; }
+    } else if (cs.phase === 'board') {
+      // tractor beam lifts mouse
+      const targetY = cs.shipY + 8;
+      m.y += (targetY - m.y) * 0.08;
+      if (cs.t >= CS.board) { cs.phase = 'ascend'; cs.t = 0; cs.mouseInShip = true; }
+    } else if (cs.phase === 'ascend') {
+      cs.shipY -= 4 + cs.t * 0.08;
+      m.y = cs.shipY + 8;
+      if (cs.t >= CS.ascend) { cs.phase = 'warp'; cs.t = 0; }
+    } else if (cs.phase === 'warp') {
+      for (const s of cs.warpStars) {
+        s.x *= 1.06;
+        s.y *= 1.06;
+        if (Math.abs(s.x) > W || Math.abs(s.y) > H) {
+          s.x = rand(-20, 20); s.y = rand(-20, 20); s.z = rand(0.1, 1);
+        }
+      }
+      if (cs.t >= CS.warp) { cs.phase = 'arrive'; cs.t = 0; cs.shipX = -80; cs.shipY = H * 0.45; }
+    } else if (cs.phase === 'arrive') {
+      cs.shipX += 2.4;
+      cs.shipY += Math.sin(cs.t / 18) * 0.6;
+      if (cs.t >= CS.arrive) {
+        state.cutscene = null;
+        stopCowbellLoop();
+        finishWin();
+      }
+    }
+  }
+
+  function finishWin() {
+    showOverlay(
+      'A New Galaxy!',
+      `The spaceship whisked you to greener pastures with ${state.score} cheese collected. Even the winged lion can't reach you here.`,
+      'Play Again'
+    );
+    state.level = 1;
+  }
+
+  function drawShip(x, y, scale = 1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    // saucer body
+    ctx.fillStyle = '#c8ccd6';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 38, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#5a6273';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // dome
+    ctx.fillStyle = 'rgba(140, 220, 255, 0.85)';
+    ctx.beginPath();
+    ctx.ellipse(0, -8, 16, 12, 0, Math.PI, 0);
+    ctx.fill();
+    ctx.strokeStyle = '#5a6273';
+    ctx.stroke();
+    // lights
+    for (let i = -2; i <= 2; i++) {
+      ctx.fillStyle = (Math.floor(Date.now()/120) + i) % 2 ? '#ffeb3b' : '#ff5a5a';
+      ctx.beginPath();
+      ctx.arc(i * 12, 4, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawCowbell(x, y, scale = 1, swing = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(swing);
+    ctx.scale(scale, scale);
+    // bell trapezoid body
+    ctx.fillStyle = '#d4a017';
+    ctx.strokeStyle = '#5a3a00';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-14, -18);
+    ctx.lineTo(14, -18);
+    ctx.lineTo(18, 18);
+    ctx.lineTo(-18, 18);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // highlight
+    ctx.fillStyle = 'rgba(255,240,180,0.6)';
+    ctx.fillRect(-10, -14, 4, 28);
+    // top yoke
+    ctx.fillStyle = '#8a6a30';
+    ctx.fillRect(-8, -24, 16, 6);
+    ctx.strokeRect(-8, -24, 16, 6);
+    // bottom rim opening
+    ctx.fillStyle = '#3a2400';
+    ctx.fillRect(-18, 16, 36, 4);
+    ctx.restore();
+  }
+
+  function drawCowbellOverlay(cs, intense) {
+    // swinging cowbell in the corner
+    const swing = Math.sin(cs.t / 6) * 0.35;
+    drawCowbell(70, 80, 1.4, swing);
+    // motion lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const a = swing + (i - 1) * 0.4;
+      ctx.beginPath();
+      ctx.arc(70, 80, 50 + i * 6, -Math.PI/2 + a - 0.15, -Math.PI/2 + a + 0.15);
+      ctx.stroke();
+    }
+    // flashing text
+    if (intense) {
+      const flash = Math.floor(cs.t / 8) % 2 === 0;
+      ctx.save();
+      ctx.translate(W/2, H - 50);
+      ctx.rotate(Math.sin(cs.t / 7) * 0.04);
+      ctx.font = 'bold 34px Impact, system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = flash ? '#ffeb3b' : '#ff5a5a';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 4;
+      ctx.strokeText('MORE COWBELL!!!', 0, 0);
+      ctx.fillText('MORE COWBELL!!!', 0, 0);
+      ctx.restore();
+    }
+  }
+
+  function drawCutscene() {
+    const cs = state.cutscene;
+    if (cs.phase === 'descend' || cs.phase === 'board' || cs.phase === 'ascend') {
+      // floor scene with sky overlay darkening
+      ctx.fillStyle = '#2d3b2d';
+      ctx.fillRect(0, 0, W, H);
+      // grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+      for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      // sky fade in during ascend
+      let dark = 0;
+      if (cs.phase === 'ascend') dark = cs.t / CS.ascend;
+      if (dark > 0) {
+        ctx.fillStyle = `rgba(5,5,25,${dark})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      // tractor beam
+      if (cs.phase === 'board' || cs.phase === 'descend') {
+        const grad = ctx.createLinearGradient(cs.shipX, cs.shipY, cs.shipX, H);
+        grad.addColorStop(0, 'rgba(180, 240, 255, 0.55)');
+        grad.addColorStop(1, 'rgba(180, 240, 255, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(cs.shipX - 14, cs.shipY + 6);
+        ctx.lineTo(cs.shipX + 14, cs.shipY + 6);
+        ctx.lineTo(cs.shipX + 70, H);
+        ctx.lineTo(cs.shipX - 70, H);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // mouse
+      if (state.mouse) drawMouse(state.mouse);
+      // ship
+      drawShip(cs.shipX, cs.shipY);
+    } else if (cs.phase === 'warp') {
+      ctx.fillStyle = '#000010';
+      ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(W/2, H/2);
+      for (const s of cs.warpStars) {
+        const px = s.x, py = s.y;
+        const back = 1 / Math.max(0.05, Math.hypot(px, py) / 200);
+        const trail = Math.min(40, back * 6);
+        ctx.strokeStyle = `rgba(255,255,255,${Math.min(1, 0.2 + back * 0.05)})`;
+        ctx.lineWidth = Math.min(2, 0.5 + s.z);
+        ctx.beginPath();
+        const norm = Math.hypot(px, py) || 1;
+        ctx.moveTo(px, py);
+        ctx.lineTo(px - (px/norm) * trail, py - (py/norm) * trail);
+        ctx.stroke();
+      }
+      ctx.restore();
+      // text
+      ctx.fillStyle = `rgba(255,255,255,${0.4 + 0.4 * Math.sin(cs.t/10)})`;
+      ctx.font = 'bold 22px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('WARP', W/2, H/2 - 80);
+      ctx.textAlign = 'start';
+    } else if (cs.phase === 'arrive') {
+      // colorful nebula galaxy
+      const g = ctx.createRadialGradient(W*0.65, H*0.5, 20, W*0.65, H*0.5, 400);
+      g.addColorStop(0, '#ffb3ff');
+      g.addColorStop(0.25, '#a050ff');
+      g.addColorStop(0.6, '#2030a0');
+      g.addColorStop(1, '#05051a');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      // stars
+      for (const s of cs.arriveStars) {
+        ctx.fillStyle = `rgba(255,255,255,${0.5 + 0.5 * Math.sin((cs.t + s.x) / 20)})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // a friendly planet
+      const px = W * 0.78, py = H * 0.7;
+      const pg = ctx.createRadialGradient(px - 18, py - 18, 6, px, py, 70);
+      pg.addColorStop(0, '#7fffd4');
+      pg.addColorStop(1, '#1a6b5a');
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.arc(px, py, 60, 0, Math.PI * 2); ctx.fill();
+      // ring
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(px, py, 85, 16, -0.3, 0, Math.PI * 2);
+      ctx.stroke();
+      // ship flying across with a tiny mouse face peeking out
+      drawShip(cs.shipX, cs.shipY, 1.1);
+      // mouse in the dome window
+      ctx.fillStyle = '#cfcfcf';
+      ctx.beginPath();
+      ctx.ellipse(cs.shipX + 2, cs.shipY - 8, 5, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#222';
+      ctx.beginPath();
+      ctx.arc(cs.shipX + 4, cs.shipY - 9, 1, 0, Math.PI * 2);
+      ctx.fill();
+      // title fade-in
+      const fade = Math.min(1, cs.t / 60);
+      ctx.fillStyle = `rgba(255,255,255,${fade})`;
+      ctx.font = 'bold 30px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('Welcome to the Cheese Nebula', W/2, 60);
+      ctx.font = '16px system-ui';
+      ctx.fillStyle = `rgba(220,220,255,${fade})`;
+      ctx.fillText('No cats in this galaxy.', W/2, 90);
+      ctx.textAlign = 'start';
+    }
+    // cowbell overlay everywhere in the cutscene; extra-loud during warp/arrive
+    drawCowbellOverlay(cs, cs.phase === 'warp' || cs.phase === 'arrive');
+  }
+
+  function update() {
+    if (state.cutscene) { updateCutscene(); return; }
+    if (!state.running) return;
+
+    const m = state.mouse;
+    if (state.boost > 0) state.boost--;
+    if (state.stuck > 0) state.stuck--;
+    m.speed = state.boost > 0 ? BOOST_SPEED : BASE_SPEED;
+
+    if (state.stuck === 0) {
+      let dx = 0, dy = 0;
+      if (keys['arrowleft']  || keys['a']) dx -= 1;
+      if (keys['arrowright'] || keys['d']) dx += 1;
+      if (keys['arrowup']    || keys['w']) dy -= 1;
+      if (keys['arrowdown']  || keys['s']) dy += 1;
+      if (dx || dy) {
+        const len = Math.hypot(dx, dy);
+        m.x += (dx / len) * m.speed;
+        m.y += (dy / len) * m.speed;
+      }
+      m.x = Math.max(m.r, Math.min(W - m.r, m.x));
+      m.y = Math.max(m.r, Math.min(H - m.r, m.y));
+    }
+
+    for (const c of state.cats) {
+      if (c.speed === 0) continue;
+      const cdx = m.x - c.x, cdy = m.y - c.y;
+      const cl = Math.hypot(cdx, cdy) || 1;
+      c.x += (cdx / cl) * c.speed;
+      c.y += (cdy / cl) * c.speed;
+    }
+
+    if (state.meditation) {
+      state.meditation.time++;
+      if (state.meditation.time >= state.meditation.duration) {
+        startWinCutscene();
+        return;
+      }
+    }
+    // gentle separation so cats don't stack
+    for (let i = 0; i < state.cats.length; i++) {
+      for (let j = i + 1; j < state.cats.length; j++) {
+        const a = state.cats[i], b = state.cats[j];
+        const dxc = b.x - a.x, dyc = b.y - a.y;
+        const d = Math.hypot(dxc, dyc) || 1;
+        const minD = a.r + b.r;
+        if (d < minD) {
+          const push = (minD - d) / 2;
+          a.x -= (dxc / d) * push;
+          a.y -= (dyc / d) * push;
+          b.x += (dxc / d) * push;
+          b.y += (dyc / d) * push;
+        }
+      }
+    }
+
+    for (let i = state.cheeses.length - 1; i >= 0; i--) {
+      const ch = state.cheeses[i];
+      if (dist(m, ch) < m.r + ch.r) {
+        if (state.meditation) {
+          // Cheese overdose. Death by temptation.
+          state.health = 0;
+          updateHealth();
+          cheeseOverdose();
+          return;
+        }
+        state.cheeses.splice(i, 1);
+        state.score++;
+        scoreEl.textContent = state.score;
+        const heal = state.level === 4 ? 13 : 8;
+        state.health = Math.min(100, state.health + heal);
+        state.boost = BOOST_FRAMES;
+        updateHealth();
+        if (state.score >= CHEESE_TO_ADVANCE) {
+          nextLevel();
+          return;
+        }
+        state.cheeses.push(spawnCheese());
+      }
+    }
+
+    if (state.catCooldown > 0) state.catCooldown--;
+    if (state.catCooldown === 0) {
+      for (const c of state.cats) {
+        if (dist(m, c) < m.r + c.r - 2) {
+          state.health -= c.damage ?? 18;
+          state.catCooldown = 30;
+          updateHealth();
+          if (state.health <= 0) { gameOver(false); return; }
+          break;
+        }
+      }
+    }
+
+    // lava: continuous damage while standing on it (no cooldown)
+    for (const l of state.lavas) {
+      if (dist(m, l) < m.r + l.r - 4) {
+        state.health -= 0.5;
+        updateHealth();
+        if (state.health <= 0) { gameOver(false); return; }
+        break;
+      }
+    }
+
+    if (state.trapPlan && state.traps.length < state.trapPlan.cap) {
+      state.trapSpawnTimer--;
+      if (state.trapSpawnTimer <= 0) {
+        const t = spawnTrap();
+        if (t) { t.spawnAnim = 30; state.traps.push(t); }
+        state.trapSpawnTimer = state.trapPlan.intervalFrames;
+      }
+    }
+    for (const t of state.traps) {
+      if (t.spawnAnim > 0) t.spawnAnim--;
+    }
+
+    if (state.trapCooldown > 0) state.trapCooldown--;
+    for (const t of state.traps) {
+      if (dist(m, t) < m.r + t.r - 4 && state.trapCooldown === 0) {
+        state.health -= 25;
+        state.trapCooldown = 45;
+        state.stuck = STUCK_FRAMES;
+        updateHealth();
+        if (state.health <= 0) { gameOver(false); return; }
+        break;
+      }
+    }
+  }
+
+  function drawMouse(m) {
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    // tail
+    ctx.strokeStyle = '#d8b8a8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-m.r + 2, 0);
+    ctx.quadraticCurveTo(-m.r - 10, 6, -m.r - 14, -2);
+    ctx.stroke();
+    // body
+    ctx.fillStyle = '#cfcfcf';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, m.r, m.r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // ears
+    ctx.fillStyle = '#f5b6c8';
+    ctx.beginPath(); ctx.arc(m.r * 0.4, -m.r * 0.7, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(m.r * 0.1, -m.r * 0.8, 4, 0, Math.PI * 2); ctx.fill();
+    // eye
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(m.r * 0.5, -m.r * 0.1, 1.8, 0, Math.PI * 2); ctx.fill();
+    // nose
+    ctx.fillStyle = '#ff7aa8';
+    ctx.beginPath(); ctx.arc(m.r * 0.9, m.r * 0.05, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawLion(c) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    const meditating = !!c.meditating;
+    // wings (behind body) — folded when meditating, flapping otherwise
+    const flap = meditating ? 0 : Math.sin(Date.now() / 90) * 0.6;
+    ctx.fillStyle = 'rgba(245,235,200,0.85)';
+    ctx.strokeStyle = '#7a5a20';
+    ctx.lineWidth = 1.5;
+    const wingReach = meditating ? c.r + 12 : c.r + 30;
+    const wingTip = meditating ? -c.r - 4 : -c.r - 14;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, -2);
+      ctx.quadraticCurveTo(
+        side * (c.r + 10), wingTip + flap * 6,
+        side * wingReach, -2 + flap * 8
+      );
+      ctx.quadraticCurveTo(
+        side * (c.r + 10), 4 + flap * 4,
+        0, 4
+      );
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // tail with tuft
+    ctx.strokeStyle = '#a06820';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(-c.r + 2, 0);
+    ctx.quadraticCurveTo(-c.r - 22, -10, -c.r - 18, -22);
+    ctx.stroke();
+    ctx.fillStyle = '#5a3a10';
+    ctx.beginPath(); ctx.arc(-c.r - 18, -22, 4, 0, Math.PI * 2); ctx.fill();
+    // mane (ring of triangles)
+    ctx.fillStyle = '#a05a10';
+    const spikes = 14;
+    ctx.beginPath();
+    for (let i = 0; i < spikes; i++) {
+      const a = (i / spikes) * Math.PI * 2;
+      const r1 = c.r + 6, r2 = c.r - 2;
+      ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      const a2 = a + Math.PI / spikes;
+      ctx.lineTo(Math.cos(a2) * r2, Math.sin(a2) * r2);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // body
+    ctx.fillStyle = '#e0a040';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, c.r, c.r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#5a3a10';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // ears
+    ctx.fillStyle = '#a05a10';
+    ctx.beginPath(); ctx.arc(-c.r * 0.5, -c.r * 0.7, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.r * 0.5, -c.r * 0.7, 4, 0, Math.PI * 2); ctx.fill();
+    if (meditating) {
+      // closed eyes (gentle arcs) + serene smile
+      ctx.strokeStyle = '#3a1a00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(-c.r * 0.3, -c.r * 0.05, 4, Math.PI * 0.15, Math.PI * 0.85);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(c.r * 0.3, -c.r * 0.05, 4, Math.PI * 0.15, Math.PI * 0.85);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, c.r * 0.2, 5, Math.PI * 0.1, Math.PI * 0.9);
+      ctx.stroke();
+      ctx.fillStyle = '#3a1a00';
+      ctx.beginPath();
+      ctx.moveTo(-3, c.r * 0.05); ctx.lineTo(3, c.r * 0.05); ctx.lineTo(0, c.r * 0.18); ctx.closePath(); ctx.fill();
+    } else {
+      // eyes (angry)
+      ctx.strokeStyle = '#5a1a00';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-c.r * 0.5, -c.r * 0.2); ctx.lineTo(-c.r * 0.15, -c.r * 0.05); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(c.r * 0.5, -c.r * 0.2); ctx.lineTo(c.r * 0.15, -c.r * 0.05); ctx.stroke();
+      ctx.fillStyle = '#ffeb3b';
+      ctx.beginPath(); ctx.arc(-c.r * 0.3, -c.r * 0.05, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(c.r * 0.3, -c.r * 0.05, 2.5, 0, Math.PI * 2); ctx.fill();
+      // nose + fangs
+      ctx.fillStyle = '#3a1a00';
+      ctx.beginPath();
+      ctx.moveTo(-3, c.r * 0.1); ctx.lineTo(3, c.r * 0.1); ctx.lineTo(0, c.r * 0.25); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(-2, c.r * 0.3); ctx.lineTo(-4, c.r * 0.45); ctx.lineTo(0, c.r * 0.35); ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(2, c.r * 0.3); ctx.lineTo(4, c.r * 0.45); ctx.lineTo(0, c.r * 0.35); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+
+    if (meditating) {
+      // floating "ॐ" symbols drifting up from the lion
+      const tNow = Date.now() / 1000;
+      ctx.save();
+      ctx.font = 'bold 18px serif';
+      ctx.textAlign = 'center';
+      for (let i = 0; i < 3; i++) {
+        const phase = (tNow * 0.35 + i * 0.33) % 1;
+        const y = c.y - c.r - 14 - phase * 70;
+        ctx.fillStyle = `rgba(180, 220, 255, ${(1 - phase) * 0.7})`;
+        ctx.fillText('ॐ', c.x + Math.sin(phase * Math.PI * 2 + i) * 10, y);
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawLava(l) {
+    ctx.save();
+    ctx.translate(l.x, l.y);
+    const pulse = 1 + Math.sin(Date.now() / 200 + l.x) * 0.04;
+    // outer glow
+    const glow = ctx.createRadialGradient(0, 0, l.r * 0.4, 0, 0, l.r * 1.4);
+    glow.addColorStop(0, 'rgba(255,180,40,0.6)');
+    glow.addColorStop(1, 'rgba(255,80,0,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, l.r * 1.4 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    // body
+    const body = ctx.createRadialGradient(0, -l.r * 0.3, l.r * 0.2, 0, 0, l.r);
+    body.addColorStop(0, '#ffec80');
+    body.addColorStop(0.4, '#ff8030');
+    body.addColorStop(1, '#a02000');
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(0, 0, l.r * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#5a0a00';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // bubbles
+    const tBub = Date.now() / 300 + l.x * 0.01;
+    for (let i = 0; i < 3; i++) {
+      const angle = tBub + i * 2.1;
+      const rad = (Math.sin(angle * 0.6) * 0.4 + 0.4) * l.r * 0.7;
+      const bx = Math.cos(angle) * rad;
+      const by = Math.sin(angle) * rad;
+      ctx.fillStyle = 'rgba(255,240,150,0.85)';
+      ctx.beginPath();
+      ctx.arc(bx, by, 2 + Math.sin(angle * 2) * 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawCat(c) {
+    if (c.type === 'lion') { drawLion(c); return; }
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    // tail
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-c.r + 2, 0);
+    ctx.quadraticCurveTo(-c.r - 18, -8, -c.r - 14, -18);
+    ctx.stroke();
+    // body
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, c.r, c.r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#0a0a0a';
+    // ears (triangles)
+    ctx.beginPath();
+    ctx.moveTo(-c.r * 0.4, -c.r * 0.7); ctx.lineTo(-c.r * 0.1, -c.r * 1.2); ctx.lineTo(0, -c.r * 0.8); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(c.r * 0.1, -c.r * 0.8); ctx.lineTo(c.r * 0.4, -c.r * 1.2); ctx.lineTo(c.r * 0.6, -c.r * 0.7); ctx.closePath(); ctx.fill();
+    // eyes
+    ctx.fillStyle = '#ffeb3b';
+    ctx.beginPath(); ctx.arc(c.r * 0.25, -c.r * 0.1, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.r * 0.65, -c.r * 0.1, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(c.r * 0.25, -c.r * 0.1, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.r * 0.65, -c.r * 0.1, 1, 0, Math.PI * 2); ctx.fill();
+    // nose
+    ctx.fillStyle = '#ff7aa8';
+    ctx.beginPath();
+    ctx.moveTo(c.r * 0.45, c.r * 0.05);
+    ctx.lineTo(c.r * 0.55, c.r * 0.05);
+    ctx.lineTo(c.r * 0.5, c.r * 0.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawCheese(c) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.fillStyle = '#ffd84a';
+    ctx.strokeStyle = '#b58a1a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-c.r, c.r * 0.6);
+    ctx.lineTo(c.r, c.r * 0.2);
+    ctx.lineTo(c.r * 0.3, -c.r * 0.9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // holes
+    ctx.fillStyle = '#b58a1a';
+    ctx.beginPath(); ctx.arc(-2, 2, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(4, -3, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawTrap(t) {
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    if (t.spawnAnim > 0) {
+      const a = t.spawnAnim / 30;
+      ctx.strokeStyle = `rgba(255,80,80,${a})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, t.r + 6 + (1 - a) * 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // base
+    ctx.fillStyle = '#8b5a2b';
+    ctx.fillRect(-t.r, -t.r * 0.6, t.r * 2, t.r * 1.2);
+    ctx.strokeStyle = '#3a2410';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-t.r, -t.r * 0.6, t.r * 2, t.r * 1.2);
+    // bait dot
+    ctx.fillStyle = '#ffd84a';
+    ctx.beginPath();
+    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // metal teeth
+    ctx.strokeStyle = '#bbb';
+    ctx.lineWidth = 1.5;
+    for (let i = -t.r + 2; i < t.r; i += 4) {
+      ctx.beginPath();
+      ctx.moveTo(i, -t.r * 0.6);
+      ctx.lineTo(i + 2, -t.r * 0.9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(i, t.r * 0.6);
+      ctx.lineTo(i + 2, t.r * 0.9);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    if (state.cutscene) { drawCutscene(); return; }
+    // floor
+    ctx.fillStyle = '#2d3b2d';
+    ctx.fillRect(0, 0, W, H);
+    // grid texture
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 40) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += 40) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    for (const l of state.lavas) drawLava(l);
+    for (const t of state.traps) drawTrap(t);
+    for (const c of state.cheeses) drawCheese(c);
+    for (const c of state.cats) drawCat(c);
+    if (state.mouse) drawMouse(state.mouse);
+
+    if (state.stuck > 0 && state.mouse) {
+      const m = state.mouse;
+      // shake-style indicator: orbiting stars
+      ctx.fillStyle = '#ffeb3b';
+      for (let i = 0; i < 3; i++) {
+        const a = Date.now() / 80 + i * (Math.PI * 2 / 3);
+        const sx = m.x + Math.cos(a) * (m.r + 8);
+        const sy = m.y - m.r - 4 + Math.sin(a) * 4;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    if (state.boost > 0 && state.mouse) {
+      const alpha = Math.min(1, state.boost / 30);
+      ctx.strokeStyle = `rgba(255,220,80,${0.4 + 0.4 * Math.sin(Date.now() / 60)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(state.mouse.x, state.mouse.y, state.mouse.r + 5, 0, Math.PI * 2);
+      ctx.stroke();
+      // little speed lines behind
+      ctx.strokeStyle = `rgba(255,220,80,${0.5 * alpha})`;
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(state.mouse.x - state.mouse.r - 4 - i * 3, state.mouse.y - 4 + i * 4);
+        ctx.lineTo(state.mouse.x - state.mouse.r - 10 - i * 3, state.mouse.y - 4 + i * 4);
+        ctx.stroke();
+      }
+    }
+
+    if (state.catCooldown > 20 && state.mouse) {
+      ctx.strokeStyle = 'rgba(255,80,80,0.6)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(state.mouse.x, state.mouse.y, state.mouse.r + 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (state.meditation) drawMeditationUI();
+  }
+
+  function drawMeditationUI() {
+    const med = state.meditation;
+    const remaining = Math.max(0, med.duration - med.time);
+    const seconds = (remaining / 60).toFixed(1);
+
+    // Speech bubble above the lion
+    const lion = state.cats[0];
+    if (lion) {
+      const bx = lion.x;
+      const by = lion.y - lion.r - 80;
+      const text = 'Sit. Breathe.\nDo not eat the cheese.';
+      const lines = text.split('\n');
+      ctx.font = '14px system-ui';
+      const widths = lines.map(l => ctx.measureText(l).width);
+      const maxW = Math.max(...widths) + 24;
+      const bh = lines.length * 18 + 16;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      const r = 8;
+      const x0 = bx - maxW / 2, y0 = by - bh;
+      ctx.moveTo(x0 + r, y0);
+      ctx.lineTo(x0 + maxW - r, y0);
+      ctx.quadraticCurveTo(x0 + maxW, y0, x0 + maxW, y0 + r);
+      ctx.lineTo(x0 + maxW, y0 + bh - r);
+      ctx.quadraticCurveTo(x0 + maxW, y0 + bh, x0 + maxW - r, y0 + bh);
+      ctx.lineTo(bx + 6, y0 + bh);
+      ctx.lineTo(bx, y0 + bh + 10);
+      ctx.lineTo(bx - 6, y0 + bh);
+      ctx.lineTo(x0 + r, y0 + bh);
+      ctx.quadraticCurveTo(x0, y0 + bh, x0, y0 + bh - r);
+      ctx.lineTo(x0, y0 + r);
+      ctx.quadraticCurveTo(x0, y0, x0 + r, y0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#222';
+      ctx.textAlign = 'center';
+      lines.forEach((l, i) => ctx.fillText(l, bx, y0 + 18 + i * 18));
+      ctx.textAlign = 'start';
+    }
+
+    // Timer ring at top of canvas
+    const cx = W / 2, cy = 32;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(cx - 90, cy - 22, 180, 44);
+    ctx.strokeStyle = '#88c';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    const frac = remaining / med.duration;
+    ctx.arc(cx - 60, cy, 14, -Math.PI / 2, -Math.PI / 2 + (1 - frac) * Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('Meditate: ' + seconds + 's', cx - 38, cy + 6);
+    ctx.restore();
+    ctx.textAlign = 'start';
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', () => {
+    const ac = getAudio();
+    if (ac && ac.state === 'suspended') ac.resume();
+    startLevel(state.level);
+    hideOverlay();
+    state.running = true;
+  });
+
+  // initial draw frame
+  startLevel(1);
+  state.running = false;
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+<!-- games:back-button -->
+<a href="index.html" id="games-home-btn" aria-label="Back to games index"><span aria-hidden="true">←</span> Home</a>
+<style>
+  #games-home-btn {
+    position: fixed; top: 1rem; left: 1rem; z-index: 99999;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.95rem; border-radius: 999px;
+    background: rgba(0,0,0,0.55); color: #fff;
+    font: 700 0.9rem/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+    text-decoration: none; border: 1px solid rgba(255,255,255,0.25);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: transform .2s cubic-bezier(.2,.9,.3,1.4), background .2s, box-shadow .2s;
+  }
+  #games-home-btn:hover {
+    transform: translateX(-4px) scale(1.05);
+    background: linear-gradient(135deg, #ff006e, #8338ec);
+    box-shadow: 0 8px 24px rgba(255,0,110,.45);
+  }
+  #games-home-btn span { font-size: 1.15rem; line-height: 1; }
+</style>
+</body>
+</html>
