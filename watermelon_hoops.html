@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Watermelon Hoops</title>
-<meta name="description" content="Aim with arrows. Hold space to charge. Score = party. Miss = catastrophic produce.">
 <style>
   :root {
     --ink: #fff5e1;
@@ -35,6 +34,15 @@
     text-shadow: 0 2px 8px #000a;
     z-index: 10;
   }
+  .hud .level {
+    font-size: 1.0rem;
+    color: #c9b8ff;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 0.2rem;
+  }
+  .hud .level b { color: #06ffa5; font-size: 1.2rem; }
+  .hud .level span { color: #fff; font-style: italic; }
   .hud .score { font-size: 1.6rem; }
   .hud .score b { color: #ffbe0b; }
   .hud .misses { font-size: 1.1rem; color: #ffb4c2; }
@@ -74,11 +82,72 @@
     opacity: 0;
     pointer-events: none;
     z-index: 20;
-    transition: opacity 0.3s, transform 0.5s cubic-bezier(.2,.9,.3,1.6);
+    transition: opacity 0.35s ease-out;
+    white-space: nowrap;
   }
-  .banner.show {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1) rotate(-3deg);
+  .banner.show { opacity: 1; }
+  .banner.score.show {
+    color: #ffbe0b;
+    text-shadow: 0 0 40px #ffbe0b, 0 8px 0 #ff006e, 0 14px 40px rgba(0,0,0,.7);
+    animation: scoreBounce 0.7s cubic-bezier(.25,1.6,.45,1) forwards;
+  }
+  @keyframes scoreBounce {
+    0%   { transform: translate(-50%, -50%) scale(0.15) rotate(-12deg); }
+    55%  { transform: translate(-50%, -50%) scale(1.25) rotate(6deg); }
+    80%  { transform: translate(-50%, -50%) scale(0.95) rotate(-4deg); }
+    100% { transform: translate(-50%, -50%) scale(1.05) rotate(-3deg); }
+  }
+  .banner.miss.show {
+    color: #ff3366;
+    font-style: italic;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    /* Drippy splat: stacked vertical drops below the glyphs to read as juice running */
+    text-shadow:
+      0 4px 0 #d11440,
+      0 9px 0 #9c0e30,
+      0 16px 0 #6a0a22,
+      4px 22px 8px rgba(255,0,110,0.55),
+      -3px 4px 0 #000,
+      0 28px 30px rgba(0,0,0,0.45);
+    animation: missDrip 1.8s cubic-bezier(.2,.55,.4,1) forwards;
+  }
+  @keyframes missDrip {
+    0%   { transform: translate(-50%, -50%) scale(0.6) rotate(-18deg) skewX(-14deg); opacity: 0; }
+    12%  { transform: translate(-50%, -50%) scale(1.35) rotate(7deg) skewX(10deg); opacity: 1; }
+    22%  { transform: translate(-50%, -45%) scale(1.2) rotate(-3deg) skewX(-4deg); opacity: 1; }
+    50%  { transform: translate(-50%, 10%) scale(1.1) rotate(6deg) skewX(6deg); opacity: 1; }
+    80%  { transform: translate(-50%, 70%) scale(1) rotate(-8deg) skewX(-5deg); opacity: 1; }
+    100% { transform: translate(-50%, 140%) scale(0.92) rotate(12deg) skewX(8deg); opacity: 0; }
+  }
+  .banner.lion.show {
+    color: #ffb347;
+    font-style: italic;
+    text-shadow:
+      -5px 5px 0 #5b3a22,
+      0 0 40px #ff5a3a,
+      0 0 80px #ff006eaa;
+    animation: lionWiggle 0.7s ease-out forwards;
+  }
+  @keyframes lionWiggle {
+    0%   { transform: translate(-50%, -50%) scale(0.3) rotate(-40deg); }
+    50%  { transform: translate(-50%, -50%) scale(1.4) rotate(18deg); }
+    100% { transform: translate(-50%, -50%) scale(1.1) rotate(8deg); }
+  }
+  .banner.win.show {
+    background: linear-gradient(180deg, #fff, #ffbe0b 35%, #ff006e 65%, #8338ec);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 0 30px #ffbe0baa) drop-shadow(0 0 60px #ff006eaa);
+    animation: winSwell 2.4s cubic-bezier(.2,.7,.3,1.4) forwards;
+  }
+  @keyframes winSwell {
+    0%   { transform: translate(-50%, -50%) scale(0.05) rotate(720deg); opacity: 0; }
+    35%  { transform: translate(-50%, -50%) scale(1.2) rotate(-6deg); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1) rotate(-2deg); opacity: 1; }
   }
   .reset-btn {
     position: fixed;
@@ -96,6 +165,72 @@
     transition: transform .2s, background .2s;
   }
   .reset-btn:hover { background: #ff006e; transform: scale(1.05); }
+
+  .cutscene {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    z-index: 25;
+    padding: 2rem;
+    pointer-events: none;
+  }
+  .cutscene.show {
+    display: flex;
+    animation: csReveal 1.6s cubic-bezier(.2,.7,.3,1.2) backwards;
+  }
+  @keyframes csReveal {
+    0%   { opacity: 0; filter: blur(20px) brightness(3); }
+    40%  { opacity: 1; filter: blur(0) brightness(1.4); }
+    100% { opacity: 1; filter: blur(0) brightness(1); }
+  }
+  .cs-title {
+    font-size: clamp(2.5rem, 9vw, 6rem);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    line-height: 0.95;
+    margin: 0 0 0.6rem;
+    background: linear-gradient(180deg, #fff, #ffbe0b 40%, #ff006e 70%, #8338ec);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 6px 24px #ff006eaa);
+    animation: csWobble 3s ease-in-out infinite;
+  }
+  @keyframes csWobble {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50%      { transform: translateY(-10px) rotate(1.5deg); }
+  }
+  .cs-sub {
+    font-size: clamp(1rem, 2.6vw, 1.6rem);
+    color: #fff5e1;
+    font-style: italic;
+    margin: 0 0 2.2rem;
+    text-shadow: 0 4px 18px #000a;
+  }
+  .cs-replay {
+    pointer-events: auto;
+    padding: 0.9rem 2.2rem;
+    font: 800 1.2rem/1 ui-rounded, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    border-radius: 999px;
+    border: 3px solid #fff;
+    background: linear-gradient(135deg, #ff006e, #8338ec);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 10px 35px #ff006eaa;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .cs-replay:hover {
+    transform: scale(1.07);
+    box-shadow: 0 14px 45px #ff006edd;
+  }
+  body.cutscene-on .hud,
+  body.cutscene-on .reset-btn { display: none; }
 </style>
 </head>
 <body>
@@ -104,6 +239,7 @@
 
 <div class="hud">
   <div>
+    <div class="level">LV <b id="level">1</b>/10 · <span id="levelLabel">Cake walk</span></div>
     <div class="score">🏀 <b id="score">0</b> swishes</div>
     <div class="misses">💥 <span id="misses">0</span> juicy disasters</div>
   </div>
@@ -114,6 +250,13 @@
 </div>
 
 <div class="banner" id="banner"></div>
+
+<div class="cutscene" id="cutscene">
+  <h2 class="cs-title">WATERMELON HOMELAND</h2>
+  <p class="cs-sub">the lions welcome you, mighty slinger ✨</p>
+  <button class="cs-replay" id="csReplay">↻ play again</button>
+</div>
+
 <button class="reset-btn" id="reset">↻ reset</button>
 
 <script>
@@ -148,6 +291,28 @@
   //         -1 => backboard on left  (opening faces right)
   let score = 0, misses = 0;
 
+  // hoopR: rim radius. dist: horizontal distance from launcher as fraction of W.
+  // hoopY / launcherY: vertical placement as fraction of H (0 = top).
+  // Note: gap between rim balls is 2*hoopR - 2*rimT. With melon diameter 44 and
+  // rimT 6, hoopR must be >= ~32 for the melon to physically pass through.
+  const LEVELS = [
+    { hoopR: 95, dist: [0.18, 0.28], hoopY: [0.55, 0.68], launcherY: [0.74, 0.82], lions: 0, label: 'Cake walk' },
+    { hoopR: 82, dist: [0.22, 0.34], hoopY: [0.50, 0.65], launcherY: [0.70, 0.82], lions: 0, label: 'Stroll' },
+    { hoopR: 70, dist: [0.28, 0.40], hoopY: [0.45, 0.62], launcherY: [0.66, 0.80], lions: 0, label: 'Warming up' },
+    { hoopR: 60, dist: [0.34, 0.48], hoopY: [0.35, 0.60], launcherY: [0.58, 0.78], lions: 0, label: 'Getting real' },
+    { hoopR: 52, dist: [0.40, 0.55], hoopY: [0.28, 0.58], launcherY: [0.50, 0.78], lions: 1, lionSpeed: [55, 95],   label: 'Tricky · 🦁 spotted' },
+    { hoopR: 46, dist: [0.45, 0.62], hoopY: [0.22, 0.58], launcherY: [0.40, 0.78], lions: 1, lionSpeed: [90, 140],  label: 'Spicy · 🦁' },
+    { hoopR: 42, dist: [0.50, 0.70], hoopY: [0.18, 0.58], launcherY: [0.35, 0.78], lions: 2, lionSpeed: [110, 170], label: 'Diabolical · 🦁🦁' },
+    { hoopR: 38, dist: [0.55, 0.78], hoopY: [0.15, 0.62], launcherY: [0.28, 0.78], lions: 3, lionSpeed: [140, 210], label: 'Pro shot · 🦁🦁🦁' },
+    { hoopR: 36, dist: [0.60, 0.85], hoopY: [0.15, 0.65], launcherY: [0.22, 0.80], lions: 4, lionSpeed: [180, 250], label: 'Beyond mortal · 🦁🦁🦁🦁' },
+    { hoopR: 34, dist: [0.55, 0.85], hoopY: [0.18, 0.65], launcherY: [0.25, 0.78], lions: 5, lionSpeed: [230, 320], label: 'Final Pride 🦁👑' },
+  ];
+  function currentLevel() { return LEVELS[Math.min(score, LEVELS.length - 1)]; }
+  function currentLevelNum() { return Math.min(score + 1, LEVELS.length); }
+  const levelEl = document.getElementById('level');
+  const levelLabelEl = document.getElementById('levelLabel');
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
   // Aim & charge
   let aim = -Math.PI / 4; // up-right
   let power = 0;          // 0..1
@@ -160,33 +325,47 @@
   const keys = { left: false, right: false, up: false, down: false };
 
   function layoutScene() {
-    placeHoopRandom();
-    placeLauncherRandom();
+    placeForLevel();
+    spawnLionsForLevel();
+    updateLevelHUD();
   }
-  function placeHoopRandom() {
-    const margin = 100;
-    hoop.x = margin + Math.random() * (W - margin * 2);
-    hoop.y = H * (0.22 + Math.random() * 0.38);
-    // Keep clear of edges
-    hoop.x = Math.max(hoop.r + 60, Math.min(W - hoop.r - hoop.bbW - 30, hoop.x));
-  }
-  function placeLauncherRandom() {
-    for (let i = 0; i < 80; i++) {
-      const x = 60 + Math.random() * (W - 120);
-      const y = 120 + Math.random() * (GROUND_Y() - 200);
-      // Avoid being right on top of hoop
-      if (Math.hypot(x - hoop.x, y - hoop.y) < 260) continue;
-      launcher.x = x;
-      launcher.y = y;
+
+  function placeForLevel() {
+    const lvl = currentLevel();
+    hoop.r = lvl.hoopR;
+    const bbMargin = lvl.hoopR + hoop.bbW + 40;
+    for (let i = 0; i < 200; i++) {
+      const lY = lerp(lvl.launcherY[0], lvl.launcherY[1], Math.random()) * H;
+      const lX = 70 + Math.random() * (W - 140);
+      const dist = lerp(lvl.dist[0], lvl.dist[1], Math.random()) * W;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const hX = lX + side * dist;
+      const hY = lerp(lvl.hoopY[0], lvl.hoopY[1], Math.random()) * H;
+      if (hX < bbMargin || hX > W - bbMargin) continue;
+      if (hY < lvl.hoopR + 30 || hY > GROUND_Y() - 80) continue;
+      if (lY < 100 || lY > GROUND_Y() - 30) continue;
+      launcher.x = lX;
+      launcher.y = lY;
+      hoop.x = hX;
+      hoop.y = hY;
       orientHoopToLauncher();
-      // Randomize starting aim so each spawn isn't predictable
       const toHoopAng = Math.atan2(hoop.y - launcher.y, hoop.x - launcher.x);
-      aim = toHoopAng - 0.6 - Math.random() * 0.6; // aim above the hoop
+      aim = toHoopAng - 0.5 - Math.random() * 0.4;
       return;
     }
-    launcher.x = 100;
-    launcher.y = GROUND_Y() - 100;
+    // Fallback if we never found a fit (narrow viewports etc.)
+    launcher.x = W * 0.2;
+    launcher.y = GROUND_Y() - 60;
+    hoop.x = Math.min(W * 0.65, W - bbMargin);
+    hoop.y = H * 0.5;
     orientHoopToLauncher();
+    aim = Math.atan2(hoop.y - launcher.y, hoop.x - launcher.x) - 0.6;
+  }
+
+  function updateLevelHUD() {
+    const lvl = currentLevel();
+    levelEl.textContent = currentLevelNum();
+    levelLabelEl.textContent = lvl.label;
   }
 
   // Backboard sits on the side away from the launcher, so the rim opening always
@@ -210,13 +389,20 @@
 
   // State
   let melon = null;
+  let lions = [];
   let chunks = [];
   let seeds = [];
   let juice = [];
   let confetti = [];
   let stars = [];
   let lastT = performance.now();
-  let cooldown = 0; // brief pause after explosion before respawning launcher
+  let cooldown = 0;
+  let gameState = 'play'; // 'play' | 'cutscene'
+  let csT = 0;
+  let csLions = [];
+  let csMelons = [];
+  const csEl = document.getElementById('cutscene');
+  const csReplayEl = document.getElementById('csReplay');
 
   function initStars() {
     stars = [];
@@ -230,9 +416,34 @@
     }
   }
 
+  function spawnLionsForLevel() {
+    lions = [];
+    const lvl = currentLevel();
+    const n = lvl.lions;
+    const [sMin, sMax] = lvl.lionSpeed || [120, 200];
+    for (let i = 0; i < n; i++) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      lions.push({
+        x: dir > 0 ? -60 - i * 220 : W + 60 + i * 220,
+        baseY: 110 + Math.random() * (H * 0.5),
+        vx: dir * (sMin + Math.random() * (sMax - sMin)),
+        bobPhase: Math.random() * Math.PI * 2,
+        bobAmp: 16 + Math.random() * 18,
+        bobSpeed: 1.4 + Math.random() * 0.8,
+        wingPhase: Math.random() * Math.PI * 2,
+        dir,
+        eating: 0,
+        r: 26,
+        hearts: [],
+      });
+    }
+  }
+  function lionY(l) { return l.baseY + Math.sin(l.bobPhase) * l.bobAmp; }
+
   // --- input ---
   window.addEventListener('keydown', e => {
     if (e.repeat) return;
+    if (gameState !== 'play') return;
     if (e.code === 'ArrowLeft')  { keys.left = true;  e.preventDefault(); }
     if (e.code === 'ArrowRight') { keys.right = true; e.preventDefault(); }
     if (e.code === 'ArrowUp')    { keys.up = true;    e.preventDefault(); }
@@ -246,6 +457,11 @@
     }
   });
   window.addEventListener('keyup', e => {
+    if (gameState !== 'play') {
+      keys.left = keys.right = keys.up = keys.down = false;
+      charging = false; power = 0;
+      return;
+    }
     if (e.code === 'ArrowLeft')  keys.left = false;
     if (e.code === 'ArrowRight') keys.right = false;
     if (e.code === 'ArrowUp')    keys.up = false;
@@ -260,6 +476,9 @@
     }
   });
 
+  csReplayEl.addEventListener('click', exitCutscene);
+  csReplayEl.addEventListener('mousedown', e => e.preventDefault());
+
   function fire() {
     const speed = MIN_POWER_SPEED + (MAX_POWER_SPEED - MIN_POWER_SPEED) * power;
     melon = {
@@ -271,6 +490,7 @@
       rot: 0,
       vrot: (Math.random() - 0.5) * 8 + (Math.cos(aim) > 0 ? 6 : -6),
       alive: true,
+      scored: false,
     };
   }
 
@@ -280,8 +500,9 @@
     missesEl.textContent = '0';
     melon = null; chunks = []; seeds = []; juice = []; confetti = [];
     charging = false; power = 0; cooldown = 0;
-    placeHoopRandom();
-    placeLauncherRandom();
+    placeForLevel();
+    spawnLionsForLevel();
+    updateLevelHUD();
     flashBanner('');
   });
   // Don't let the reset button steal focus and break Space
@@ -302,69 +523,91 @@
       }
     }
 
+    // Lions roam regardless of melon state
+    updateLions(dt);
+
     if (melon && melon.alive) {
       melon.vy += G * dt;
       melon.x += melon.vx * dt;
       melon.y += melon.vy * dt;
       melon.rot += melon.vrot * dt;
 
-      // Pass through hoop ring
-      const hl = hoop.x - hoop.r, hr = hoop.x + hoop.r;
-      const inX = melon.x > hl + 6 && melon.x < hr - 6;
-      const crossY = melon.y >= hoop.y && (melon.y - melon.vy * dt) < hoop.y;
-      if (inX && crossY && melon.vy > 0) {
-        scoreSwish();
-        return;
-      }
-
-      // Rim bounce (each rim end is a small circle)
-      for (const rim of [{ x: hl, y: hoop.y }, { x: hr, y: hoop.y }]) {
-        const dx = melon.x - rim.x;
-        const dy = melon.y - rim.y;
-        const d = Math.hypot(dx, dy);
-        const min = melon.r + hoop.rimT;
-        if (d < min) {
-          const nx = dx / (d || 1);
-          const ny = dy / (d || 1);
-          melon.x = rim.x + nx * (min + 0.1);
-          melon.y = rim.y + ny * (min + 0.1);
-          const vDotN = melon.vx * nx + melon.vy * ny;
-          if (vDotN < 0) {
-            melon.vx -= 2 * vDotN * nx;
-            melon.vy -= 2 * vDotN * ny;
-            melon.vx *= 0.55;
-            melon.vy *= 0.55;
-            melon.vrot += (Math.random() - 0.5) * 8;
+      if (!melon.scored) {
+        // Lion catch: a hungry vegetarian intercepts the melon
+        for (const l of lions) {
+          if (l.eating > 0) continue;
+          const ly = lionY(l);
+          if (Math.hypot(melon.x - l.x, melon.y - ly) < melon.r + l.r * 0.8) {
+            lionEatsMelon(l);
+            return;
           }
         }
-      }
 
-      // Backboard bounce
-      const bbX = backboardX();
-      const bbR = bbX + hoop.bbW;
-      const bbTop = hoop.y - hoop.bbH * 0.7;
-      const bbBot = hoop.y + hoop.bbH * 0.3;
-      if (melon.x + melon.r > bbX && melon.x - melon.r < bbR &&
-          melon.y > bbTop && melon.y < bbBot) {
-        if (hoop.facing === 1) {
-          melon.x = bbX - melon.r - 0.1;
+        // Pass through hoop ring
+        const hl = hoop.x - hoop.r, hr = hoop.x + hoop.r;
+        const inX = melon.x > hl + 6 && melon.x < hr - 6;
+        const crossY = melon.y >= hoop.y && (melon.y - melon.vy * dt) < hoop.y;
+        if (inX && crossY && melon.vy > 0) {
+          scoreSwish();
+          // Don't return — let physics keep running so the melon falls through.
         } else {
-          melon.x = bbR + melon.r + 0.1;
-        }
-        if (melon.vx * (hoop.facing) > 0) {
-          melon.vx = -melon.vx * 0.45;
-          melon.vy *= 0.75;
-          melon.vrot *= 0.6;
+          // Rim bounce (only if we didn't just score this frame)
+          for (const rim of [{ x: hl, y: hoop.y }, { x: hr, y: hoop.y }]) {
+            const dx = melon.x - rim.x;
+            const dy = melon.y - rim.y;
+            const d = Math.hypot(dx, dy);
+            const min = melon.r + hoop.rimT;
+            if (d < min) {
+              const nx = dx / (d || 1);
+              const ny = dy / (d || 1);
+              melon.x = rim.x + nx * (min + 0.1);
+              melon.y = rim.y + ny * (min + 0.1);
+              const vDotN = melon.vx * nx + melon.vy * ny;
+              if (vDotN < 0) {
+                melon.vx -= 2 * vDotN * nx;
+                melon.vy -= 2 * vDotN * ny;
+                melon.vx *= 0.55;
+                melon.vy *= 0.55;
+                melon.vrot += (Math.random() - 0.5) * 8;
+              }
+            }
+          }
+
+          // Backboard bounce
+          const bbX = backboardX();
+          const bbR = bbX + hoop.bbW;
+          const bbTop = hoop.y - hoop.bbH * 0.7;
+          const bbBot = hoop.y + hoop.bbH * 0.3;
+          if (melon.x + melon.r > bbX && melon.x - melon.r < bbR &&
+              melon.y > bbTop && melon.y < bbBot) {
+            if (hoop.facing === 1) {
+              melon.x = bbX - melon.r - 0.1;
+            } else {
+              melon.x = bbR + melon.r + 0.1;
+            }
+            if (melon.vx * (hoop.facing) > 0) {
+              melon.vx = -melon.vx * 0.45;
+              melon.vy *= 0.75;
+              melon.vrot *= 0.6;
+            }
+          }
         }
       }
 
       // Ground
       if (melon.y + melon.r >= GROUND_Y()) {
-        explodeMelon();
+        if (melon.scored) {
+          happyLanding();
+        } else {
+          explodeMelon();
+        }
         return;
       }
       // Off-screen
       if (melon.x < -150 || melon.x > W + 150 || melon.y > H + 200) {
+        if (melon.scored) {
+          advanceAfterScore();
+        }
         melon = null;
         cooldown = 0.4;
       }
@@ -419,16 +662,118 @@
   }
 
   function scoreSwish() {
+    if (!melon || melon.scored) return;
+    melon.scored = true;
+    // Give the melon a tiny extra downward kick so it really feels like it dropped.
+    melon.vy = Math.max(melon.vy, 380);
+    melon.vx *= 0.55;
+    melon.vrot += (Math.random() < 0.5 ? -1 : 1) * 4;
+    const prevLevel = currentLevelNum();
     score++;
     scoreEl.textContent = score;
+    partyTime();
+    const nextLevel = currentLevelNum();
+    const leveledUp = nextLevel !== prevLevel;
+    if (score === LEVELS.length) {
+      flashBanner('CHAMPION! 🦁👑', 'win');
+    } else if (leveledUp) {
+      flashBanner(`LEVEL ${nextLevel}!`, 'score');
+    } else {
+      flashBanner(pickCelebration(), 'score');
+    }
+  }
+
+  function happyLanding() {
+    if (!melon) return;
+    const mx = melon.x;
+    const my = GROUND_Y() - melon.r;
+    // Sparkles + small juice puff (gentle — the melon survived its destiny)
+    const colors = ['#ffbe0b', '#06ffa5', '#ff70a6', '#fff5e1', '#8338ec'];
+    for (let i = 0; i < 70; i++) {
+      const a = -Math.PI + Math.random() * Math.PI; // upward fan
+      const sp = 120 + Math.random() * 360;
+      confetti.push({
+        x: mx + (Math.random() - 0.5) * 20,
+        y: my,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        size: 4 + Math.random() * 7,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 14,
+        kind: Math.random() < 0.5 ? 'circle' : 'rect',
+        life: 1.4 + Math.random() * 1.2,
+      });
+    }
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 220;
+      juice.push({
+        x: mx, y: my + 6,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 40,
+        r: 3 + Math.random() * 6,
+        life: 0.8 + Math.random() * 0.7,
+      });
+    }
+    melon = null;
+    cooldown = 0.8;
+    advanceAfterScore();
+  }
+
+  function advanceAfterScore() {
+    if (score >= LEVELS.length) {
+      // Last swish completed — transport to the homeland.
+      setTimeout(enterCutscene, 1100);
+      return;
+    }
+    setTimeout(() => {
+      placeForLevel();
+      spawnLionsForLevel();
+      updateLevelHUD();
+    }, 750);
+  }
+
+  function lionEatsMelon(l) {
+    l.eating = 1.2;
+    // Hearts above lion
+    for (let i = 0; i < 8; i++) {
+      l.hearts.push({
+        x: (Math.random() - 0.5) * 30,
+        y: -10,
+        vx: (Math.random() - 0.5) * 60,
+        vy: -60 - Math.random() * 40,
+        life: 1.0 + Math.random() * 0.5,
+      });
+    }
     melon = null;
     cooldown = 0.6;
-    partyTime();
-    flashBanner(pickCelebration());
-    setTimeout(() => {
-      placeHoopRandom();
-      placeLauncherRandom();
-    }, 700);
+    misses++;
+    missesEl.textContent = misses;
+    flashBanner(pickLionLine(), 'lion');
+  }
+
+  function updateLions(dt) {
+    for (const l of lions) {
+      l.x += l.vx * dt;
+      l.bobPhase += l.bobSpeed * dt;
+      l.wingPhase += dt * 18;
+      if (l.eating > 0) l.eating -= dt;
+      for (const h of l.hearts) {
+        h.x += h.vx * dt;
+        h.y += h.vy * dt;
+        h.vy += 30 * dt;
+        h.life -= dt;
+      }
+      l.hearts = l.hearts.filter(h => h.life > 0);
+      if (l.dir > 0 && l.x > W + 80) {
+        l.x = -80;
+        l.baseY = 110 + Math.random() * (H * 0.5);
+      } else if (l.dir < 0 && l.x < -80) {
+        l.x = W + 80;
+        l.baseY = 110 + Math.random() * (H * 0.5);
+      }
+    }
   }
 
   function explodeMelon() {
@@ -479,8 +824,8 @@
         life: 1.2 + Math.random() * 1.4,
       });
     }
-    flashBanner(pickFailure());
-    screenShake(18, 0.45);
+    flashBanner(pickFailure(), 'miss');
+    screenShake(22, 0.5);
   }
 
   function partyTime() {
@@ -503,15 +848,23 @@
 
   const CELEBRATIONS = ['SWISH!', 'BUCKETS!', 'COLD!', 'NICE!', 'KOBE!', '🎉 PARTY!', 'FRUITY!', 'JUICY!'];
   const FAILURES = ['SPLAT!', 'OOF!', 'YIKES!', '💥 BOOM!', 'BRICK!', 'TRAGIC!', 'RIP MELON', 'JUICE EVERYWHERE'];
+  const LION_LINES = ['NOM!', 'YUM 🦁', 'VEGAN STRIKE!', 'LION-FED!', 'CRUNCH!', 'STOLEN!', 'KING\'S LUNCH'];
   function pickCelebration() { return CELEBRATIONS[Math.floor(Math.random() * CELEBRATIONS.length)]; }
   function pickFailure() { return FAILURES[Math.floor(Math.random() * FAILURES.length)]; }
+  function pickLionLine() { return LION_LINES[Math.floor(Math.random() * LION_LINES.length)]; }
   let bannerTimer = null;
-  function flashBanner(text) {
-    if (!text) { banner.classList.remove('show'); return; }
+  const BANNER_VARIANTS = ['score', 'miss', 'lion', 'win'];
+  function flashBanner(text, variant = 'score') {
+    banner.classList.remove('show', ...BANNER_VARIANTS);
+    if (!text) return;
+    // Force reflow so the animation restarts cleanly on repeated calls.
+    void banner.offsetWidth;
     banner.textContent = text;
-    banner.classList.add('show');
+    banner.classList.add('show', variant);
     clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(() => banner.classList.remove('show'), 1100);
+    const lingers = { score: 1200, miss: 1900, lion: 1200, win: 2600 };
+    const linger = lingers[variant] ?? 1200;
+    bannerTimer = setTimeout(() => banner.classList.remove('show'), linger);
   }
 
   let shakeAmt = 0, shakeT = 0;
@@ -536,6 +889,7 @@
     drawAimAndPreview();
     drawPowerMeter();
     drawMelon();
+    drawLions();
     drawChunks();
     drawSeeds();
     drawJuice();
@@ -543,6 +897,100 @@
 
     ctx.restore();
   }
+
+  function drawLion(l, y) {
+    ctx.save();
+    ctx.translate(l.x, y);
+    ctx.scale(l.dir, 1);
+    const wf = Math.sin(l.wingPhase);
+    ctx.fillStyle = '#ffffffd5';
+    ctx.strokeStyle = '#0b1c3a55';
+    ctx.lineWidth = 1.5;
+    for (const wsign of [-1, 1]) {
+      ctx.save();
+      ctx.translate(0, -10);
+      ctx.rotate(wsign * (0.2 + wf * 0.5));
+      ctx.beginPath();
+      ctx.ellipse(0, -wsign * 4, 30 * l.r / 26, 12 * l.r / 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = '#a0522d';
+    ctx.beginPath();
+    const spikes = 16;
+    for (let i = 0; i < spikes; i++) {
+      const a = (i / spikes) * Math.PI * 2;
+      const r = i % 2 === 0 ? l.r + 4 : l.r - 2;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#f4a460';
+    ctx.beginPath();
+    ctx.arc(0, 0, l.r - 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd9a8';
+    ctx.beginPath();
+    ctx.arc(-l.r * 0.25, l.r * 0.15, l.r * 0.18, 0, Math.PI * 2);
+    ctx.arc(l.r * 0.25, l.r * 0.15, l.r * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+    const eyeY = l.eating > 0 ? -1 : -3;
+    if (l.eating > 0) {
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(-l.r * 0.25, eyeY, 3, Math.PI, 0);
+      ctx.arc(l.r * 0.25, eyeY, 3, Math.PI, 0);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(-l.r * 0.25, eyeY, 2.4, 0, Math.PI * 2);
+      ctx.arc(l.r * 0.25, eyeY, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#2a1010';
+    ctx.beginPath();
+    ctx.moveTo(0, 1);
+    ctx.lineTo(-3, 4);
+    ctx.lineTo(3, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#2a1010';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    if (l.eating > 0) {
+      ctx.arc(0, 7, 5, 0, Math.PI);
+      ctx.fillStyle = '#ff5a7e';
+      ctx.fill();
+    } else {
+      ctx.arc(0, 6, 5, 0.2, Math.PI - 0.2);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawLions() {
+    for (const l of lions) {
+      const y = lionY(l);
+      drawLion(l, y);
+      for (const h of l.hearts) {
+        ctx.save();
+        ctx.translate(l.x + h.x, y + h.y);
+        ctx.globalAlpha = Math.min(1, h.life);
+        ctx.fillStyle = '#ff3366';
+        ctx.font = '20px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('♥', 0, 0);
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
 
   function drawStars() {
     for (const s of stars) {
@@ -849,9 +1297,139 @@
       shakeAmt *= 0.92;
       if (shakeT <= 0) { shakeAmt = 0; shakeT = 0; }
     }
-    step(dt);
-    draw();
+    if (gameState === 'cutscene') {
+      updateCutscene(dt);
+      drawCutsceneFrame();
+    } else {
+      step(dt);
+      draw();
+    }
     requestAnimationFrame(loop);
+  }
+
+  function enterCutscene() {
+    gameState = 'cutscene';
+    csT = 0;
+    charging = false; power = 0;
+    melon = null;
+    chunks = []; seeds = []; juice = []; confetti = [];
+    setupCutscene();
+    document.body.classList.add('cutscene-on');
+    csEl.classList.add('show');
+  }
+
+  function exitCutscene() {
+    gameState = 'play';
+    csEl.classList.remove('show');
+    document.body.classList.remove('cutscene-on');
+    score = 0; misses = 0;
+    scoreEl.textContent = '0';
+    missesEl.textContent = '0';
+    placeForLevel();
+    spawnLionsForLevel();
+    updateLevelHUD();
+    flashBanner('');
+  }
+
+  function setupCutscene() {
+    csLions = [];
+    const N = 9;
+    for (let i = 0; i < N; i++) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      csLions.push({
+        x: Math.random() * W,
+        baseY: 90 + Math.random() * (H - 220),
+        vx: dir * (60 + Math.random() * 140),
+        vy: (Math.random() - 0.5) * 40,
+        bobPhase: Math.random() * Math.PI * 2,
+        bobAmp: 12 + Math.random() * 22,
+        bobSpeed: 0.9 + Math.random() * 1.1,
+        wingPhase: Math.random() * Math.PI * 2,
+        dir,
+        eating: 0,
+        r: 22 + Math.random() * 22,
+        hearts: [],
+      });
+    }
+    csMelons = [];
+    const M = 22;
+    for (let i = 0; i < M; i++) {
+      csMelons.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vy: -(15 + Math.random() * 35),
+        wobblePhase: Math.random() * Math.PI * 2,
+        wobbleSpeed: 0.6 + Math.random() * 1.4,
+        wobbleAmp: 10 + Math.random() * 30,
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 1.4,
+        r: 12 + Math.random() * 22,
+      });
+    }
+  }
+
+  function updateCutscene(dt) {
+    csT += dt;
+    for (const l of csLions) {
+      l.x += l.vx * dt;
+      l.bobPhase += l.bobSpeed * dt;
+      l.wingPhase += dt * 16;
+      if (l.x < -80) l.x = W + 80;
+      if (l.x > W + 80) l.x = -80;
+    }
+    for (const m of csMelons) {
+      m.wobblePhase += m.wobbleSpeed * dt;
+      m.y += m.vy * dt;
+      m.rot += m.vrot * dt;
+      if (m.y + m.r < -40) {
+        m.y = H + 40;
+        m.x = Math.random() * W;
+      }
+    }
+  }
+
+  function drawCutsceneFrame() {
+    // Dreamy gradient sky
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#ff70a6');
+    grad.addColorStop(0.35, '#ffbe0b');
+    grad.addColorStop(0.7, '#8338ec');
+    grad.addColorStop(1, '#3a86ff');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Soft sun glow
+    const cx = W * 0.72, cy = H * 0.32;
+    const sgrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 240);
+    sgrad.addColorStop(0, '#fff5e1ee');
+    sgrad.addColorStop(0.35, '#ffbe0baa');
+    sgrad.addColorStop(1, '#ff006e00');
+    ctx.fillStyle = sgrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 240, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Twinkling sparkles
+    for (const s of stars) {
+      ctx.globalAlpha = 0.4 + 0.4 * Math.sin(s.tw + csT * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Floating melons
+    for (const m of csMelons) {
+      const wx = m.x + Math.sin(m.wobblePhase) * m.wobbleAmp;
+      drawWatermelon(wx, m.y, m.r, m.rot);
+    }
+
+    // Lions
+    for (const l of csLions) {
+      const y = l.baseY + Math.sin(l.bobPhase) * l.bobAmp;
+      drawLion(l, y);
+    }
   }
 
   resize();
