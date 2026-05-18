@@ -1057,30 +1057,74 @@
       ctx.arc(0, 0, t.r + 6 + (1 - a) * 6, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // base
-    ctx.fillStyle = '#8b5a2b';
-    ctx.fillRect(-t.r, -t.r * 0.6, t.r * 2, t.r * 1.2);
-    ctx.strokeStyle = '#3a2410';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(-t.r, -t.r * 0.6, t.r * 2, t.r * 1.2);
-    // bait dot
-    ctx.fillStyle = '#ffd84a';
-    ctx.beginPath();
-    ctx.arc(0, 0, 3, 0, Math.PI * 2);
-    ctx.fill();
-    // metal teeth
-    ctx.strokeStyle = '#bbb';
-    ctx.lineWidth = 1.5;
-    for (let i = -t.r + 2; i < t.r; i += 4) {
+    const r = t.r;
+    const bw = r * 1.7; // base half-width
+    const bh = r * 1.1; // base half-height
+    // wooden base
+    ctx.fillStyle = '#b07a3e';
+    ctx.fillRect(-bw, -bh, bw * 2, bh * 2);
+    // wood grain
+    ctx.strokeStyle = 'rgba(80,45,18,0.45)';
+    ctx.lineWidth = 0.5;
+    for (let i = 1; i < 4; i++) {
+      const y = -bh + (bh * 2 * i) / 4;
       ctx.beginPath();
-      ctx.moveTo(i, -t.r * 0.6);
-      ctx.lineTo(i + 2, -t.r * 0.9);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(i, t.r * 0.6);
-      ctx.lineTo(i + 2, t.r * 0.9);
+      ctx.moveTo(-bw, y + Math.sin(i) * 0.8);
+      ctx.lineTo(bw, y + Math.cos(i) * 0.8);
       ctx.stroke();
     }
+    // base outline
+    ctx.strokeStyle = '#3a2410';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-bw, -bh, bw * 2, bh * 2);
+    // coiled spring (left side)
+    const sx = -bw + 4;
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(sx, 0, 3.2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(sx, 0, 2.0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#444';
+    ctx.beginPath();
+    ctx.arc(sx, 0, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    // hold-down bar (thin diagonal wire)
+    ctx.strokeStyle = '#999';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bw - 2, -bh + 2);
+    ctx.lineTo(2, bh - 3);
+    ctx.stroke();
+    // arched metal kill bar (set position — pulled back over base)
+    ctx.strokeStyle = '#cfcfcf';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx, -2.5);
+    ctx.lineTo(sx + 2, -bh + 1);
+    ctx.lineTo(bw - 2, -bh + 1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sx, 2.5);
+    ctx.lineTo(sx + 2, bh - 1);
+    ctx.lineTo(bw - 2, bh - 1);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // bait pedal (small yellow square in center-right)
+    const px = r * 0.45;
+    ctx.fillStyle = '#d4a64a';
+    ctx.fillRect(px - 3, -3, 6, 6);
+    ctx.strokeStyle = '#5a3a10';
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(px - 3, -3, 6, 6);
+    // tiny cheese crumb on pedal
+    ctx.fillStyle = '#ffd84a';
+    ctx.beginPath();
+    ctx.arc(px, 0, 1.4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
