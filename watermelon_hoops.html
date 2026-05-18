@@ -677,7 +677,8 @@
     if (score === LEVELS.length) {
       flashBanner('CHAMPION! 🦁👑', 'win');
     } else if (leveledUp) {
-      flashBanner(`LEVEL ${nextLevel}!`, 'score');
+      flashBanner(pickCelebration(), 'score');
+      setTimeout(() => flashBanner(`LEVEL ${nextLevel}!`, 'score'), 1000);
     } else {
       flashBanner(pickCelebration(), 'score');
     }
@@ -846,7 +847,7 @@
     }
   }
 
-  const CELEBRATIONS = ['SWISH!', 'BUCKETS!', 'COLD!', 'NICE!', 'KOBE!', '🎉 PARTY!', 'FRUITY!', 'JUICY!'];
+  const CELEBRATIONS = ['SWISH!', 'BUCKETS!', 'COLD!', 'NICE!', 'KOBE!', '🎉 PARTY!', 'FRUITY!', 'JUICY!', 'AWESOME!', "BEE'S KNEES!", 'CAT\'S PYJAMAS!', 'BOOYAH!', 'HOT SAUCE!', 'MAGNIFICENT!', 'SCRUMPTIOUS!'];
   const FAILURES = ['SPLAT!', 'OOF!', 'YIKES!', '💥 BOOM!', 'BRICK!', 'TRAGIC!', 'RIP MELON', 'JUICE EVERYWHERE'];
   const LION_LINES = ['NOM!', 'YUM 🦁', 'VEGAN STRIKE!', 'LION-FED!', 'CRUNCH!', 'STOLEN!', 'KING\'S LUNCH'];
   function pickCelebration() { return CELEBRATIONS[Math.floor(Math.random() * CELEBRATIONS.length)]; }
