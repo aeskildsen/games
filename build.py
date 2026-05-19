@@ -149,6 +149,8 @@ html = f"""<!DOCTYPE html>
     min-height: 100vh;
     overflow-x: hidden;
     position: relative;
+    display: flex;
+    flex-direction: column;
   }}
   body::before {{
     content: "";
@@ -231,11 +233,16 @@ html = f"""<!DOCTYPE html>
   .stats b {{ color: #ffbe0b; }}
 
   main {{
+    flex: 1;
+    width: 100%;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 2rem 1.5rem 6rem;
+    padding: 2rem 1.5rem;
     position: relative;
     z-index: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }}
   .grid {{
     display: grid;
@@ -403,9 +410,7 @@ else:
 html += f"""</main>
 
 <footer>
-  built with ✨ vibes ✨ ·
-  <a href="https://github.com/aeskildsen/games" target="_blank" rel="noopener">source</a> ·
-  press <kbd>?</kbd> if you dare
+  <a href="https://github.com/aeskildsen/games" target="_blank" rel="noopener">source</a>
 </footer>
 
 <script>
@@ -487,24 +492,6 @@ html += f"""</main>
       card.addEventListener('mouseleave', () => {{
         card.style.transform = '';
       }});
-    }});
-  }})();
-
-  // Easter egg: press ? for a surprise
-  (function() {{
-    document.addEventListener('keydown', e => {{
-      if (e.key !== '?') return;
-      const burst = ['🎉', '🎊', '🥳', '🪅', '💥', '🦄'];
-      for (let i = 0; i < 60; i++) {{
-        const s = document.createElement('div');
-        s.className = 'sparkle';
-        s.style.fontSize = (1 + Math.random() * 2.5) + 'rem';
-        s.textContent = burst[Math.floor(Math.random() * burst.length)];
-        s.style.left = (Math.random() * window.innerWidth) + 'px';
-        s.style.top = (Math.random() * window.innerHeight) + 'px';
-        document.body.appendChild(s);
-        setTimeout(() => s.remove(), 800);
-      }}
     }});
   }})();
 </script>
