@@ -48,6 +48,16 @@
   .hud .level b { color: #06ffa5; font-size: 1.2rem; }
   .hud .level span { color: #fff; font-style: italic; }
   .hud .misses { font-size: 1.1rem; color: #ffb4c2; }
+  .hud .lions-fed {
+    display: none;
+    font-size: 1.1rem;
+    color: #06ffa5;
+    animation: lionsFedSparkle 2s ease-in-out infinite;
+  }
+  @keyframes lionsFedSparkle {
+    0%, 100% { text-shadow: 0 0 6px #06ffa5, 0 0 14px #06ffa566; }
+    50% { text-shadow: 0 0 14px #06ffa5, 0 0 28px #06ffa5cc, 0 0 50px #ffffffaa; filter: brightness(1.35); }
+  }
   .hud .hint {
     font-size: 0.9rem;
     color: #fff9;
@@ -246,8 +256,9 @@
 
 <div class="hud">
   <div>
-    <div class="level">LV <b id="level">1</b>/10 · <span id="levelLabel">Cake walk</span></div>
+    <div class="level">Level <b id="level">1</b>/10 · <span id="levelLabel">Cake walk</span></div>
     <div class="misses">💥 <span id="misses">0</span> juicy disasters</div>
+    <div class="lions-fed" id="lionsFed">🦁 0 lions fed</div>
   </div>
   <div class="hint">
     <kbd>←</kbd> <kbd>→</kbd> aim · <kbd>↑</kbd> <kbd>↓</kbd> fine-tune<br>
@@ -261,6 +272,14 @@
   <h2 class="cs-title">WATERMELON HOMELAND</h2>
   <p class="cs-sub">the lions welcome you, mighty slinger ✨</p>
   <button class="cs-replay" id="csReplay">↻ play again</button>
+</div>
+
+<div class="cutscene" id="easterCutscene">
+  <h2 class="cs-title" style="font-size: clamp(1.6rem,5.5vw,3.8rem); line-height: 1.25;">
+    zzz… thank you for the<br>watermelon lunch… zzz
+  </h2>
+  <p class="cs-sub">the pride is most grateful 🍉😴</p>
+  <button class="cs-replay" id="esContinue">▶ continue</button>
 </div>
 
 <button class="reset-btn" id="reset">↻ reset</button>
@@ -317,7 +336,7 @@
   const hoop = { x: 0, y: 0, r: 52, rimT: 6, bbW: 14, bbH: 120, facing: 1 };
   // facing: +1 => backboard on right (opening faces left)
   //         -1 => backboard on left  (opening faces right)
-  let score = 0, misses = 0;
+  let score = 0, misses = 0, lionsFed = 0;
 
   // hoopR: rim radius. dist: horizontal distance from launcher as fraction of W.
   // hoopY / launcherY: vertical placement as fraction of H (0 = top).
@@ -409,6 +428,7 @@
     const lvl = currentLevel();
     levelEl.textContent = currentLevelNum();
     levelLabelEl.textContent = lvl.label;
+    lionsFedEl.style.display = lvl.lions > 0 ? 'block' : 'none';
   }
 
   // Backboard sits on the side away from the launcher, so the rim opening always
@@ -442,10 +462,14 @@
   let cooldown = 0;
   let gameState = 'play'; // 'play' | 'cutscene'
   let csT = 0;
+  let easterT = 0;
+  let easterAutoExitTimer = null;
   let csLions = [];
   let csMelons = [];
   const csEl = document.getElementById('cutscene');
   const csReplayEl = document.getElementById('csReplay');
+  const lionsFedEl = document.getElementById('lionsFed');
+  const esContinueEl = document.getElementById('esContinue');
 
   function initStars() {
     stars = [];
@@ -521,6 +545,8 @@
 
   csReplayEl.addEventListener('click', exitCutscene);
   csReplayEl.addEventListener('mousedown', e => e.preventDefault());
+  esContinueEl.addEventListener('click', exitEasterCutscene);
+  esContinueEl.addEventListener('mousedown', e => e.preventDefault());
 
   function fire() {
     const speed = MIN_POWER_SPEED + (MAX_POWER_SPEED - MIN_POWER_SPEED) * power;
@@ -538,8 +564,9 @@
   }
 
   resetBtn.addEventListener('click', () => {
-    score = 0; misses = 0;
+    score = 0; misses = 0; lionsFed = 0;
     missesEl.textContent = '0';
+    lionsFedEl.textContent = '🦁 0 lions fed';
     melon = null; chunks = []; seeds = []; juice = []; confetti = [];
     charging = false; power = 0; cooldown = 0; camHoldT = 0;
     placeForLevel();
@@ -794,9 +821,10 @@
     melon = null;
     cooldown = 1.0;
     holdCameraOn(lx, ly, 0.7);
-    misses++;
-    missesEl.textContent = misses;
+    lionsFed++;
+    lionsFedEl.textContent = `🦁 ${lionsFed} lions fed`;
     flashBanner(pickLionLine(), 'lion');
+    if (lionsFed >= 10 && gameState === 'play') setTimeout(enterEasterCutscene, 1200);
   }
 
   function updateLions(dt) {
@@ -832,11 +860,11 @@
     // gentle poof at low speed, cataclysmic splat at full power.
     const speed = Math.hypot(mvx, mvy);
     const t = Math.max(0, Math.min(1, (speed - 400) / 1600));
-    const intensity = 0.2 + t * t * 2.6;
+    const intensity = t * t * t * 2.8;
     cooldown = 1.1 + intensity * 0.3;
     holdCameraOn(mx, my, 0.8 + intensity * 0.3);
-    const sizeMul = Math.sqrt(intensity);
-    const spreadMul = 0.55 + intensity * 0.85;
+    const sizeMul = 1.5 * Math.sqrt(intensity);
+    const spreadMul = 0.3 + intensity * 1.46;
     const N_CHUNKS = Math.round(60 + 220 * intensity);
     const N_SEEDS  = Math.round(45 + 160 * intensity);
     const N_JUICE  = Math.round(20 + 75 * intensity);
@@ -1458,6 +1486,9 @@
     if (gameState === 'cutscene') {
       updateCutscene(dt);
       drawCutsceneFrame();
+    } else if (gameState === 'easter') {
+      easterT += dt;
+      drawEasterCutsceneFrame();
     } else {
       step(dt);
       updateCamera(dt);
@@ -1481,12 +1512,181 @@
     gameState = 'play';
     csEl.classList.remove('show');
     document.body.classList.remove('cutscene-on');
-    score = 0; misses = 0;
+    score = 0; misses = 0; lionsFed = 0;
     missesEl.textContent = '0';
+    lionsFedEl.textContent = '🦁 0 lions fed';
     placeForLevel();
     spawnLionsForLevel();
     updateLevelHUD();
     flashBanner('');
+  }
+
+  function enterEasterCutscene() {
+    if (gameState !== 'play') return;
+    gameState = 'easter';
+    easterT = 0;
+    charging = false; power = 0;
+    melon = null;
+    chunks = []; seeds = []; juice = []; confetti = [];
+    document.body.classList.add('cutscene-on');
+    document.getElementById('easterCutscene').classList.add('show');
+    easterAutoExitTimer = setTimeout(exitEasterCutscene, 8000);
+  }
+
+  function exitEasterCutscene() {
+    clearTimeout(easterAutoExitTimer);
+    gameState = 'play';
+    document.getElementById('easterCutscene').classList.remove('show');
+    document.body.classList.remove('cutscene-on');
+    lionsFed = 0;
+    lionsFedEl.textContent = '🦁 0 lions fed';
+    placeForLevel();
+    spawnLionsForLevel();
+  }
+
+  function drawSleepyLionFace(x, y, r, t) {
+    ctx.save();
+    ctx.translate(x, y + Math.sin(t * 1.4) * 4);
+
+    // Mane outer
+    ctx.fillStyle = '#7a3a10';
+    ctx.beginPath();
+    const spikes = 20;
+    for (let i = 0; i < spikes; i++) {
+      const a = (i / spikes) * Math.PI * 2;
+      const rr = i % 2 === 0 ? r * 1.38 : r * 1.06;
+      const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+
+    // Mane inner
+    ctx.fillStyle = '#a0522d';
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.08, 0, Math.PI * 2); ctx.fill();
+
+    // Face
+    ctx.fillStyle = '#f4a460';
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+
+    // Rosy cheeks
+    ctx.fillStyle = '#ffaa8844';
+    ctx.beginPath();
+    ctx.arc(-r * 0.38, r * 0.2, r * 0.24, 0, Math.PI * 2);
+    ctx.arc(r * 0.38, r * 0.2, r * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sleepy closed eyes (downward ⌣ arcs)
+    ctx.strokeStyle = '#5a3010';
+    ctx.lineWidth = r * 0.08;
+    ctx.lineCap = 'round';
+    for (const ex of [-r * 0.32, r * 0.32]) {
+      ctx.beginPath();
+      ctx.arc(ex, -r * 0.12, r * 0.16, 0.1, Math.PI - 0.1);
+      ctx.stroke();
+    }
+
+    // Sleepy brow lines
+    ctx.lineWidth = r * 0.045;
+    for (const [ex, sign] of [[-r * 0.32, -1], [r * 0.32, 1]]) {
+      ctx.beginPath();
+      ctx.moveTo(ex - r * 0.14, -r * 0.32 + sign * r * 0.04);
+      ctx.lineTo(ex + r * 0.14, -r * 0.3 - sign * r * 0.04);
+      ctx.stroke();
+    }
+
+    // Nose
+    ctx.fillStyle = '#3a1a08';
+    ctx.beginPath();
+    ctx.moveTo(0, r * 0.06);
+    ctx.lineTo(-r * 0.1, r * 0.18);
+    ctx.lineTo(r * 0.1, r * 0.18);
+    ctx.closePath(); ctx.fill();
+
+    // Content smile
+    ctx.strokeStyle = '#3a1a08';
+    ctx.lineWidth = r * 0.065;
+    ctx.beginPath();
+    ctx.arc(0, r * 0.26, r * 0.17, 0.3, Math.PI - 0.3);
+    ctx.stroke();
+
+    // Full belly
+    ctx.fillStyle = '#e8945588';
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.92, r * 0.6, r * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#c87a4044';
+    ctx.lineWidth = r * 0.04;
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.92, r * 0.6, r * 0.38, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawZzzParticles(x, y, t) {
+    const zDefs = [
+      { dx: 12, delay: 0,    size: 20 },
+      { dx: 34, delay: 0.34, size: 26 },
+      { dx: 60, delay: 0.67, size: 32 },
+    ];
+    ctx.textAlign = 'center';
+    for (const z of zDefs) {
+      const progress = ((t * 0.38 + z.delay) % 1.0);
+      const zy = y - progress * 110;
+      const alpha = progress < 0.65 ? progress / 0.65 : (1 - progress) / 0.35;
+      ctx.globalAlpha = alpha * 0.88;
+      ctx.fillStyle = '#fff5e1';
+      ctx.font = `900 ${z.size}px ui-rounded, system-ui, sans-serif`;
+      ctx.fillText('z', x + z.dx, zy);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawEasterCutsceneFrame() {
+    // Warm cosy background
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#ffe066');
+    bg.addColorStop(0.45, '#ff9c3a');
+    bg.addColorStop(1, '#6b2200');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Soft warm centre glow
+    const gx = W / 2, gy = H * 0.5;
+    const sg = ctx.createRadialGradient(gx, gy, 0, gx, gy, Math.min(W, H) * 0.55);
+    sg.addColorStop(0, '#fff5e1bb');
+    sg.addColorStop(1, '#ffe06600');
+    ctx.fillStyle = sg;
+    ctx.beginPath(); ctx.arc(gx, gy, Math.min(W, H) * 0.55, 0, Math.PI * 2); ctx.fill();
+
+    // Ground shadow
+    ctx.fillStyle = '#5a200088';
+    ctx.beginPath();
+    ctx.ellipse(W / 2, H * 0.73, W * 0.3, H * 0.06, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const lionR = Math.min(W, H) * 0.19;
+    const lionX = W / 2, lionY2 = H * 0.51;
+
+    // Watermelon half next to lion
+    drawWatermelon(lionX + lionR * 1.75, lionY2 + lionR * 0.45, lionR * 0.52, easterT * 0.15);
+
+    // Watermelon rind piece on other side
+    drawWatermelon(lionX - lionR * 1.5, lionY2 + lionR * 0.6, lionR * 0.35, -easterT * 0.12);
+
+    // Twinkling background stars
+    for (const s of stars) {
+      ctx.globalAlpha = 0.35 + 0.35 * Math.sin(s.tw + easterT * 2.5);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(s.x, s.y * 0.55, s.r * 1.1, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Sleepy lion face
+    drawSleepyLionFace(lionX, lionY2, lionR, easterT);
+
+    // Zzz
+    drawZzzParticles(lionX + lionR * 0.1, lionY2 - lionR * 1.0, easterT);
   }
 
   function setupCutscene() {
