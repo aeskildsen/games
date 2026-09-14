@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate a delightfully unhinged index.html for the vibe-coded games."""
-from pathlib import Path
-from html import escape
-from html.parser import HTMLParser
+
 import hashlib
 import json
+from html import escape
+from html.parser import HTMLParser
+from pathlib import Path
 
 
 class MetaExtractor(HTMLParser):
@@ -43,10 +44,46 @@ def extract(path: Path):
 
 
 EMOJIS = [
-    "🎮", "🕹️", "👾", "🦑", "🐸", "🧀", "🐭", "🍕", "🔥", "✨",
-    "🌶️", "🦖", "🛸", "🪩", "🧠", "🎲", "🎯", "🐙", "🍌", "🦄",
-    "💀", "👻", "🤖", "🐉", "🌈", "⚡", "💥", "🪐", "🧨", "🥨",
+    "🎮",
+    "🕹️",
+    "👾",
+    "🦑",
+    "🐸",
+    "🧀",
+    "🐭",
+    "🍕",
+    "🔥",
+    "✨",
+    "🌶️",
+    "🦖",
+    "🛸",
+    "🪩",
+    "🧠",
+    "🎲",
+    "🎯",
+    "🐙",
+    "🍌",
+    "🦄",
+    "💀",
+    "👻",
+    "🤖",
+    "🐉",
+    "🌈",
+    "⚡",
+    "💥",
+    "🪐",
+    "🧨",
+    "🥨",
 ]
+
+# Hand-picked logos for specific games, overriding the hash-based pick below.
+# "overlay" (optional) is drawn large behind "emoji" — e.g. a pi symbol
+# standing in for the crossbones behind a skull.
+LOGO_OVERRIDES = {
+    "pi_rates.html": {"emoji": "💀", "overlay": "π"},
+    "of_mice_and_cheese.html": {"emoji": "🧀"},
+    "watermelon_hoops.html": {"emoji": "🍉"},
+}
 
 TAGLINES = [
     "100% vibes, 0% planning",
@@ -65,11 +102,15 @@ TAGLINES = [
 def card_for(path: Path) -> dict:
     title, desc = extract(path)
     h = int(hashlib.sha256(path.name.encode()).hexdigest(), 16)
+    override = LOGO_OVERRIDES.get(path.name)
+    emoji = override["emoji"] if override else EMOJIS[h % len(EMOJIS)]
+    overlay = override.get("overlay") if override else None
     return {
         "href": path.name,
         "title": title,
         "desc": desc or "",
-        "emoji": EMOJIS[h % len(EMOJIS)],
+        "emoji": emoji,
+        "overlay": overlay,
         "hue": (h // 7) % 360,
     }
 
@@ -304,6 +345,36 @@ html = f"""<!DOCTYPE html>
   .card:hover .emoji {{
     transform: scale(1.25) rotate(-12deg);
   }}
+  .card .emoji-wrap {{
+    position: relative;
+    display: inline-block;
+    transition: transform 0.4s cubic-bezier(.2,.9,.3,1.6);
+  }}
+  .card .emoji-wrap .emoji-base {{
+    position: relative;
+    z-index: 1;
+    font-size: 3.6rem;
+    line-height: 1;
+    display: inline-block;
+    filter: drop-shadow(0 4px 10px #00000066);
+  }}
+  .card .emoji-wrap .emoji-overlay {{
+    position: absolute;
+    z-index: 0;
+    top: 54%;
+    left: 50%;
+    transform: translate(-55%, -55%) rotate(-45deg);
+    font-size: 9rem;
+    font-weight: 600;
+    font-style: normal;
+    font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+    color: #f4ead1;
+    text-shadow: 0 2px 5px #0009;
+    opacity: 0.95;
+  }}
+  .card:hover .emoji-wrap {{
+    transform: scale(1.25) rotate(-12deg);
+  }}
   .card h2 {{
     margin: 0.8rem 0 0.3rem;
     font-size: 1.5rem;
@@ -391,21 +462,30 @@ html = f"""<!DOCTYPE html>
 if cards:
     html += '  <div class="grid">\n'
     for i, c in enumerate(cards):
-        desc_html = f'<p>{escape(c["desc"])}</p>' if c["desc"] else ""
+        desc_html = f"<p>{escape(c['desc'])}</p>" if c["desc"] else ""
+        if c.get("overlay"):
+            emoji_html = (
+                '<span class="emoji-wrap">'
+                f'<span class="emoji-base">{c["emoji"]}</span>'
+                f'<span class="emoji-overlay">{escape(c["overlay"])}</span>'
+                "</span>"
+            )
+        else:
+            emoji_html = f'<span class="emoji">{c["emoji"]}</span>'
         html += f'''    <a class="card" href="{escape(c["href"])}" style="--hue: {c["hue"]}; animation-delay: {i * 0.06:.2f}s;">
-      <span class="emoji">{c["emoji"]}</span>
+      {emoji_html}
       <h2>{escape(c["title"])}</h2>
       {desc_html}
       <span class="play">Play <span class="arrow">→</span></span>
     </a>
 '''
-    html += '  </div>\n'
+    html += "  </div>\n"
 else:
-    html += '''  <div class="empty">
+    html += """  <div class="empty">
     <div class="big">🫥</div>
     <p>No games here yet. Drop a <code>.html</code> file in the root and watch this page bloom.</p>
   </div>
-'''
+"""
 
 html += f"""</main>
 

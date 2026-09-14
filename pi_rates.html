@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Climb the mast, dodge cannonballs, and increase the pi rate.">
+<title>Pi Rates</title>
+<style>
+  :root { --ink: #fff5e1; }
+  * { box-sizing: border-box; user-select: none; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  body {
+    font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    background: #0b1c3a;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  .hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: 1rem 1.4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    font-weight: 800;
+    text-shadow: 0 2px 8px #000a;
+    z-index: 10;
+  }
+  .hud .gold {
+    margin-top: 2.6rem;
+    font-size: 1.3rem;
+    color: #ffd447;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .hud .gold .coin {
+    display: inline-block;
+    width: 1.1rem; height: 1.1rem;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff6c9, #ffd447 55%, #b8860b 100%);
+    box-shadow: 0 0 6px #ffd44799;
+  }
+  .hud .wind {
+    font-size: 0.95rem;
+    color: #9fd8ff;
+    text-align: right;
+    font-style: italic;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.8rem;
+    padding: 2rem;
+    background: radial-gradient(ellipse at 50% 40%, #000a, #0009 60%, #0007);
+    z-index: 20;
+  }
+  .overlay h1 {
+    font-size: clamp(2rem, 7vw, 3.6rem);
+    margin: 0;
+    letter-spacing: -0.02em;
+    background: linear-gradient(180deg, #fff, #ffd447 50%, #ff7e5f);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 6px 20px #00000088);
+  }
+  .overlay p {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #e6ecffcc;
+    max-width: 26em;
+    line-height: 1.5;
+  }
+  .overlay .big {
+    font-size: 4.5rem;
+    line-height: 1;
+    filter: drop-shadow(0 6px 16px #0009);
+  }
+  .overlay kbd {
+    display: inline-block;
+    padding: 0.15em 0.6em;
+    border-radius: 6px;
+    background: #ffffff22;
+    border: 1px solid #ffffff44;
+    font: inherit;
+    font-weight: 700;
+  }
+  .overlay .cta {
+    margin-top: 0.6rem;
+    font-size: 1rem;
+    color: #9fffc9;
+    font-weight: 700;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div class="gold"><span class="coin"></span><span id="goldCount">0.000</span> / 314.159</div>
+  <div class="wind">Wind: <b id="windPct">0%</b> · Pi Rate <b id="piRate">1.00×</b></div>
+</div>
+
+<div class="overlay" id="startScreen">
+  <div class="big">🥧🏴‍☠️</div>
+  <h1>Pi Rates</h1>
+  <p>Climb the mast, dodge the cannon fire, and mind yer pi rate. Every coin pays out in π — and the faster the wind blows, the richer the rate.</p>
+  <p><kbd>↑</kbd> / <kbd>W</kbd> to climb, <kbd>↓</kbd> / <kbd>S</kbd> to descend. Let go and you hold your grip.</p>
+  <p class="cta">Press ↑, W, ↓, or S to set sail</p>
+</div>
+
+<div class="overlay" id="endScreen" hidden>
+  <div class="big" id="endEmoji">💀</div>
+  <h1 id="endTitle">Ye Sank</h1>
+  <p id="endText"></p>
+  <p class="cta">Press ↑, W, ↓, or S to try again</p>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const goldCountEl = document.getElementById('goldCount');
+  const windPctEl = document.getElementById('windPct');
+  const piRateEl = document.getElementById('piRate');
+  const startScreen = document.getElementById('startScreen');
+  const endScreen = document.getElementById('endScreen');
+  const endEmoji = document.getElementById('endEmoji');
+  const endTitle = document.getElementById('endTitle');
+  const endText = document.getElementById('endText');
+
+  const GOAL = 100 * Math.PI; // 100π points — 100 coins' worth at the base pi rate
+  const END_LOCK_MS = 1800;   // ignore restart input for a beat so you can read the screen
+  const CLIMB_SPEED = 380;    // px/s while holding up/down; static otherwise
+  const BASE_SPEED = 150;     // px/s at t=0
+  const MAX_SPEED = 950;      // px/s cap ("basically impossible")
+  const RAMP_TIME = 120;      // seconds to reach max speed — escalation should be obvious
+  const PLAYER_R = 30;
+  const BALL_R = 9;
+  const COIN_R = 13;
+  const AIM_TIME = 0.7;       // seconds an enemy ship telegraphs before firing
+  const RETREAT_TIME = 0.6;   // seconds an enemy ship takes to sail off after firing
+  const DECK_OFFSET = 12;     // how far the home ship's deck sits above the waterline
+  const BALL_GRAVITY = 950;   // arc physics for fired cannonballs
+  const CANNON_DX = -30;      // cannon mouth offset from an enemy ship's anchor point
+  const CANNON_DY = -14;
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  let state = 'start'; // start | playing | gameover | win
+  let ship, entities, flashes, ships, t, elapsed, spawnTimer, coinTimer, score, coinsCollected;
+  let endLockUntil = 0;
+
+  function seaTop() { return H - Math.max(70, H * 0.14); }
+  function skyTop() { return 0; }
+  function deckY() { return seaTop() - DECK_OFFSET; }
+
+  function reset() {
+    ship = { x: W * 0.24, y: H * 0.4, vy: 0 };
+    entities = [];
+    flashes = [];
+    ships = [];
+    t = 0;
+    elapsed = 0;
+    spawnTimer = 2.2;
+    coinTimer = 0.6;
+    score = 0;
+    coinsCollected = 0;
+    goldCountEl.textContent = '0.000';
+    windPctEl.textContent = '0%';
+    piRateEl.textContent = '1.00×';
+  }
+
+  function windSpeed() {
+    const p = Math.min(1, elapsed / RAMP_TIME);
+    return BASE_SPEED + (MAX_SPEED - BASE_SPEED) * p;
+  }
+
+  // the "pi rate": how many π your next coin pays out.
+  //
+  // --- original: time-based ramp, holds at 1x then climbs with the wind ---
+  // const PI_RATE_DELAY = 20; // seconds before it starts climbing
+  // function piRate() {
+  //   const p = elapsed <= PI_RATE_DELAY ? 0 : Math.min(1, (elapsed - PI_RATE_DELAY) / (RAMP_TIME - PI_RATE_DELAY));
+  //   return 1 + p * 3;
+  // }
+
+  // --- experimental: exponential, tied to coins collected instead of time.
+  // First PI_RATE_FLAT_COINS coins pay flat 1x. Each coin after that
+  // compounds the rate by PI_RATE_GROWTH (so it's 1.01x on the very next
+  // coin, ~1.02x the one after, etc.) — literally squaring it each time
+  // would hit absurd numbers within a dozen coins, so this compounds by a
+  // fixed factor instead, tuned so it reaches the old ~4x ceiling around
+  // the same point in a typical run. Capped at 4x to match that old arc;
+  // drop the cap if you want it to keep climbing unbounded.
+  const PI_RATE_FLAT_COINS = 3;
+  const PI_RATE_GROWTH = 1.01;
+  // small time-based drift layered on top, purely so the number is always
+  // creeping rather than only jumping on each coin — keeps it feeling less
+  // mechanical. Adds up to +20% once the wind reaches full speed.
+  const TIME_BONUS_MAX = 0.2;
+  function timeBonus() {
+    return 1 + Math.min(1, elapsed / RAMP_TIME) * TIME_BONUS_MAX;
+  }
+  function piRate() {
+    const n = Math.max(0, coinsCollected - PI_RATE_FLAT_COINS);
+    const coinRate = Math.min(4, Math.pow(PI_RATE_GROWTH, n));
+    return coinRate * timeBonus();
+  }
+
+  function rampProgress() {
+    return Math.min(1, elapsed / RAMP_TIME);
+  }
+
+  function lerpColor(hexA, hexB, t) {
+    const a = parseInt(hexA.slice(1), 16), b = parseInt(hexB.slice(1), 16);
+    const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+    const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+    const r = Math.round(ar + (br - ar) * t);
+    const g = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return `rgb(${r},${g},${bl})`;
+  }
+
+  const held = { up: false, down: false };
+  function isUpKey(e) { return e.code === 'ArrowUp' || e.code === 'KeyW'; }
+  function isDownKey(e) { return e.code === 'ArrowDown' || e.code === 'KeyS'; }
+
+  function startOrRestart() {
+    if (state === 'start') {
+      startScreen.hidden = true;
+      state = 'playing';
+      reset();
+    } else if (state === 'gameover' || state === 'win') {
+      if (performance.now() < endLockUntil) return; // let 'em read the screen first
+      endScreen.hidden = true;
+      startScreen.hidden = true;
+      state = 'playing';
+      reset();
+    }
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (isUpKey(e)) {
+      e.preventDefault();
+      held.up = true;
+      startOrRestart();
+    } else if (isDownKey(e)) {
+      e.preventDefault();
+      held.down = true;
+      startOrRestart();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (isUpKey(e)) held.up = false;
+    else if (isDownKey(e)) held.down = false;
+  });
+  window.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    startOrRestart();
+  }, { passive: false });
+
+  function spawnEnemyShip() {
+    ships.push({ x: W - 40, aim: AIM_TIME, fired: false, retreat: 0 });
+  }
+
+  function cannonMouth(s) {
+    return { x: s.x + CANNON_DX, y: seaTop() + CANNON_DY };
+  }
+
+  function spawnCoin() {
+    const y = skyTop() + 50 + Math.random() * (seaTop() - skyTop() - 100);
+    entities.push({ type: 'coin', x: W + 30, y, r: COIN_R, bob: Math.random() * Math.PI * 2, spin: Math.random() * Math.PI * 2 });
+  }
+
+  function endGame(won) {
+    state = won ? 'win' : 'gameover';
+    endLockUntil = performance.now() + END_LOCK_MS;
+    if (won) {
+      endEmoji.textContent = '🥧';
+      endTitle.textContent = 'Pi in the Sky!';
+      endText.textContent = `${score.toFixed(3)} points banked at a peak pi rate of ${piRate().toFixed(2)}×. Yer fortune is irrational — in the best way.`;
+    } else {
+      endEmoji.textContent = '💥';
+      endTitle.textContent = 'Ye Got Hit';
+      endText.textContent = `Scraped together ${score.toFixed(3)} of ${GOAL.toFixed(3)} points before a cannonball cut yer pi rate short.`;
+    }
+    endScreen.hidden = false;
+  }
+
+  function update(dt) {
+    elapsed += dt;
+    t += dt;
+
+    // pirate climbs the mast directly; static unless up/down is held
+    let dir = 0;
+    if (held.up) dir -= 1;
+    if (held.down) dir += 1;
+    ship.vy = dir * CLIMB_SPEED;
+    ship.y += ship.vy * dt;
+    if (ship.y - PLAYER_R < skyTop()) {
+      ship.y = skyTop() + PLAYER_R;
+      ship.vy = 0;
+    }
+    if (ship.y + PLAYER_R > deckY()) {
+      ship.y = deckY() - PLAYER_R;
+      ship.vy = 0;
+    }
+
+    const speed = windSpeed();
+    const rampP = rampProgress();
+    windPctEl.textContent = Math.round(100 * rampP) + '%';
+    windPctEl.style.color = rampP < 0.45 ? '#8bffa8' : rampP < 0.8 ? '#ffd447' : '#ff5a3c';
+    piRateEl.textContent = piRate().toFixed(2) + '×';
+    piRateEl.style.color = windPctEl.style.color;
+
+    // spawn enemy ships, faster as wind builds; each aims, fires, then retreats
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnEnemyShip();
+      const interval = Math.max(0.8, 3.0 - 2.2 * Math.min(1, elapsed / RAMP_TIME));
+      spawnTimer = interval * (0.75 + Math.random() * 0.5);
+    }
+    coinTimer -= dt;
+    if (coinTimer <= 0) {
+      spawnCoin();
+      coinTimer = (0.8 + Math.random() * 0.6);
+    }
+
+    for (let i = ships.length - 1; i >= 0; i--) {
+      const s = ships[i];
+      if (!s.fired) {
+        s.aim -= dt;
+        if (s.aim <= 0) {
+          s.fired = true;
+          const m = cannonMouth(s);
+          // aim at a random point anywhere up the mast (not just near the deck),
+          // and near the player rather than dead-on, so some shots overshoot,
+          // undershoot, or cross at a different height than you'd expect.
+          // wind ramp shortens flight time: lazy early lobs, flat fast late shots.
+          const targetX = ship.x + (Math.random() * 260 - 90);
+          const targetY = skyTop() + 30 + Math.random() * (deckY() - skyTop() - 60);
+          const rampP = Math.min(1, elapsed / RAMP_TIME);
+          const baseT = 1.7 - (1.7 - 0.6) * rampP;
+          const T = baseT * (0.7 + Math.random() * 0.6);
+          const vx = (targetX - m.x) / T;
+          const vy = (targetY - m.y - 0.5 * BALL_GRAVITY * T * T) / T;
+          entities.push({ type: 'ball', x: m.x, y: m.y, r: BALL_R, vx, vy });
+          flashes.push({ x: m.x, y: m.y, life: 0.3, max: 0.3, color: '#ffbe0b' });
+        }
+      } else {
+        s.retreat += dt;
+        s.x += 70 * dt;
+        if (s.retreat > RETREAT_TIME) { ships.splice(i, 1); continue; }
+      }
+    }
+
+    for (let i = entities.length - 1; i >= 0; i--) {
+      const e = entities[i];
+      if (e.type === 'ball') {
+        e.vy += BALL_GRAVITY * dt;
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        if (e.x < -40) { entities.splice(i, 1); continue; }
+        if (e.y + e.r >= seaTop()) {
+          flashes.push({ x: e.x, y: seaTop(), life: 0.25, max: 0.25, color: '#bfe9ff' });
+          entities.splice(i, 1);
+          continue;
+        }
+      } else {
+        e.x -= speed * dt;
+        e.bob += dt * 4;
+        e.spin += dt * 3.4;
+        if (e.x < -40) { entities.splice(i, 1); continue; }
+      }
+
+      const dx = e.x - ship.x;
+      const dy = (e.y + (e.type === 'coin' ? Math.sin(e.bob) * 6 : 0)) - ship.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < e.r + PLAYER_R) {
+        if (e.type === 'ball') {
+          endGame(false);
+          return;
+        } else {
+          entities.splice(i, 1);
+          coinsCollected++;
+          score += Math.PI * piRate();
+          goldCountEl.textContent = score.toFixed(3);
+          if (score >= GOAL) {
+            endGame(true);
+            return;
+          }
+        }
+      }
+    }
+
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      flashes[i].life -= dt;
+      flashes[i].x -= speed * dt;
+      if (flashes[i].life <= 0) flashes.splice(i, 1);
+    }
+  }
+
+  function drawBoat(x) {
+    // the player's own ship: anchored, stationary, always sitting on the water
+    ctx.save();
+    ctx.translate(x, seaTop());
+    // hull
+    ctx.beginPath();
+    ctx.moveTo(-42, -10);
+    ctx.quadraticCurveTo(-46, 20, -16, 26);
+    ctx.lineTo(20, 26);
+    ctx.quadraticCurveTo(46, 20, 42, -10);
+    ctx.closePath();
+    ctx.fillStyle = '#6b4423';
+    ctx.fill();
+    ctx.strokeStyle = '#3a2513';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // deck plank line
+    ctx.beginPath();
+    ctx.moveTo(-38, -10);
+    ctx.lineTo(38, -10);
+    ctx.strokeStyle = '#8a5a30';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // mast — climbable, runs all the way to the top of the sky
+    const mastTop = -(seaTop() - 10);
+    ctx.beginPath();
+    ctx.moveTo(-4, -10);
+    ctx.lineTo(-4, mastTop);
+    ctx.strokeStyle = '#3a2513';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    // climbing rungs on the bare mast above the sail
+    ctx.strokeStyle = '#8a5a30';
+    ctx.lineWidth = 2.5;
+    for (let ly = -70; ly > mastTop + 14; ly -= 26) {
+      ctx.beginPath();
+      ctx.moveTo(-12, ly);
+      ctx.lineTo(4, ly);
+      ctx.stroke();
+    }
+    // sail (lower on the mast)
+    ctx.beginPath();
+    ctx.moveTo(-4, -54);
+    ctx.lineTo(34, -26);
+    ctx.lineTo(-4, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#fff5e1';
+    ctx.fill();
+    ctx.strokeStyle = '#c9b8ff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // jolly roger at the very top of the mast
+    ctx.beginPath();
+    ctx.moveTo(-4, mastTop);
+    ctx.lineTo(30, mastTop + 8);
+    ctx.lineTo(-4, mastTop + 16);
+    ctx.closePath();
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // skull
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(10, mastTop + 8, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(7.5, mastTop + 10.5, 5, 3);
+    // crossbones
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(4, mastTop + 4);
+    ctx.lineTo(16, mastTop + 13);
+    ctx.moveTo(16, mastTop + 4);
+    ctx.lineTo(4, mastTop + 13);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPirate(x, y, vy) {
+    const lean = Math.max(-0.15, Math.min(0.15, vy / 3000));
+    const sway = Math.sin(t * 6) * 0.1;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(lean + sway);
+    // legs, bent and gripping the mast
+    ctx.fillStyle = '#3a2513';
+    ctx.beginPath();
+    ctx.moveTo(-2, 6);
+    ctx.quadraticCurveTo(-15, 12, -7, 25);
+    ctx.quadraticCurveTo(-2, 20, -2, 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(2, 6);
+    ctx.quadraticCurveTo(15, 12, 7, 25);
+    ctx.quadraticCurveTo(2, 20, 2, 12);
+    ctx.closePath();
+    ctx.fill();
+    // boots
+    ctx.fillStyle = '#1a1010';
+    ctx.beginPath();
+    ctx.arc(-7, 26, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(7, 26, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // torso / coat
+    ctx.beginPath();
+    ctx.moveTo(-11, -12);
+    ctx.quadraticCurveTo(-14, 6, -9, 12);
+    ctx.lineTo(9, 12);
+    ctx.quadraticCurveTo(14, 6, 11, -12);
+    ctx.closePath();
+    ctx.fillStyle = '#2b4d6b';
+    ctx.fill();
+    ctx.strokeStyle = '#152a3a';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // belt
+    ctx.fillStyle = '#3a2513';
+    ctx.fillRect(-11, 8, 22, 4);
+    // arms reaching up, gripping the mast
+    ctx.strokeStyle = '#d99a66';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-9, -8);
+    ctx.lineTo(-3, -25);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(9, -8);
+    ctx.lineTo(3, -25);
+    ctx.stroke();
+    // hands
+    ctx.fillStyle = '#d99a66';
+    ctx.beginPath();
+    ctx.arc(-3, -26, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(3, -26, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    // head
+    ctx.beginPath();
+    ctx.arc(0, -20, 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#d99a66';
+    ctx.fill();
+    // bandana
+    ctx.beginPath();
+    ctx.moveTo(-11, -25);
+    ctx.quadraticCurveTo(0, -36, 11, -25);
+    ctx.quadraticCurveTo(0, -29, -11, -25);
+    ctx.closePath();
+    ctx.fillStyle = '#c81d4a';
+    ctx.fill();
+    // bandana tail
+    ctx.beginPath();
+    ctx.moveTo(10, -26);
+    ctx.quadraticCurveTo(19, -22, 15, -14);
+    ctx.quadraticCurveTo(13, -20, 7, -23);
+    ctx.closePath();
+    ctx.fillStyle = '#c81d4a';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawEnemyShip(s, alpha, aimProgress) {
+    const x = s.x, y = seaTop();
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.scale(-1, 1); // mirror to face the player, sitting on the water like the home ship
+    // hull
+    ctx.beginPath();
+    ctx.moveTo(-38, -8);
+    ctx.quadraticCurveTo(-42, 18, -14, 24);
+    ctx.lineTo(18, 24);
+    ctx.quadraticCurveTo(42, 18, 38, -8);
+    ctx.closePath();
+    ctx.fillStyle = '#3a2a2a';
+    ctx.fill();
+    ctx.strokeStyle = '#1a1010';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    // mast
+    ctx.beginPath();
+    ctx.moveTo(-2, -8);
+    ctx.lineTo(-2, -48);
+    ctx.strokeStyle = '#1a1010';
+    ctx.lineWidth = 3.4;
+    ctx.stroke();
+    // sail
+    ctx.beginPath();
+    ctx.moveTo(-2, -44);
+    ctx.lineTo(28, -20);
+    ctx.lineTo(-2, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#2a2a30';
+    ctx.fill();
+    ctx.strokeStyle = '#55555a';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // flag
+    ctx.beginPath();
+    ctx.moveTo(-2, -48);
+    ctx.lineTo(-18, -41);
+    ctx.lineTo(-2, -34);
+    ctx.closePath();
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    // skull
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(-10, -41, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-11.5, -39.5, 3, 1.8);
+    // crossbones
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-13, -43);
+    ctx.lineTo(-7, -38);
+    ctx.moveTo(-7, -43);
+    ctx.lineTo(-13, -38);
+    ctx.stroke();
+    ctx.restore();
+
+    // telegraph glow at the cannon mouth, growing as it's about to fire
+    if (aimProgress != null) {
+      const m = cannonMouth(s);
+      const r = 3 + aimProgress * 9;
+      ctx.save();
+      ctx.globalAlpha = alpha * (0.5 + aimProgress * 0.5);
+      ctx.fillStyle = '#ff5a3c';
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function draw() {
+    const rampP = state === 'playing' ? rampProgress() : 0;
+
+    // sky: shifts from calm daytime blue toward a stormy grey as the wind builds
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, seaTop());
+    skyGrad.addColorStop(0, lerpColor('#3aa0ef', '#48586b', rampP));
+    skyGrad.addColorStop(1, lerpColor('#bfe6ff', '#9aacba', rampP));
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, seaTop());
+
+    // soft cloud flavor (static, cheap)
+    ctx.fillStyle = `rgba(255,255,255,${0.67 - rampP * 0.3})`;
+    for (let i = 0; i < 6; i++) {
+      const cx = (i * 231 + 60) % (W + 120) - 60;
+      const cy = 30 + (i * 53) % Math.max(1, seaTop() * 0.55);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 34, 13, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 26, cy + 4, 24, 10, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx - 24, cy + 5, 22, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // wind streaks: speed and density make the escalating wind hard to miss
+    const streakSpeed = 110 + rampP * 520;
+    ctx.strokeStyle = `rgba(255,255,255,${0.18 + rampP * 0.32})`;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    const streakCount = 6 + Math.round(rampP * 10);
+    for (let i = 0; i < streakCount; i++) {
+      const span = W + 240;
+      const raw = (i * 173 - t * streakSpeed) % span;
+      const x = (raw < 0 ? raw + span : raw) - 120;
+      const y = 16 + (i * 47) % Math.max(1, seaTop() - 30);
+      const len = 26 + rampP * 46;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - len, y + len * 0.15);
+      ctx.stroke();
+    }
+
+    // sea: deepens and darkens as the storm builds
+    const seaGrad = ctx.createLinearGradient(0, seaTop(), 0, H);
+    seaGrad.addColorStop(0, lerpColor('#1f8fe0', '#164a68', rampP));
+    seaGrad.addColorStop(1, lerpColor('#0a3f7a', '#031729', rampP));
+    ctx.fillStyle = seaGrad;
+    ctx.fillRect(0, seaTop(), W, H - seaTop());
+    ctx.strokeStyle = '#ffffff33';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, seaTop());
+    ctx.lineTo(W, seaTop());
+    ctx.stroke();
+
+    // the player's own ship, anchored and stationary
+    drawBoat(ship.x);
+
+    // enemy ships: aiming, then retreating after firing
+    for (const s of ships) {
+      const alpha = s.fired ? Math.max(0, 1 - s.retreat / RETREAT_TIME) : 1;
+      const aimProgress = s.fired ? null : 1 - s.aim / AIM_TIME;
+      drawEnemyShip(s, alpha, aimProgress);
+    }
+
+    // flashes: muzzle fire and splashes
+    for (const f of flashes) {
+      const a = f.life / f.max;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = f.color || '#ffbe0b';
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 6 + (1 - a) * 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // entities
+    for (const e of entities) {
+      if (e.type === 'ball') {
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#111';
+        ctx.fill();
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      } else {
+        const by = e.y + Math.sin(e.bob) * 6;
+        const scaleX = Math.max(0.16, Math.abs(Math.cos(e.spin)));
+        ctx.save();
+        ctx.translate(e.x, by);
+        ctx.scale(scaleX, 1);
+        // coin face
+        ctx.beginPath();
+        ctx.arc(0, 0, e.r, 0, Math.PI * 2);
+        const g = ctx.createRadialGradient(-e.r * 0.3, -e.r * 0.3, 1, 0, 0, e.r);
+        g.addColorStop(0, '#fff6c9');
+        g.addColorStop(0.55, '#ffd447');
+        g.addColorStop(1, '#b8860b');
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.strokeStyle = '#8a5a00';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // inner rim
+        ctx.beginPath();
+        ctx.arc(0, 0, e.r * 0.62, 0, Math.PI * 2);
+        ctx.strokeStyle = '#8a5a0099';
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+        // embossed star emblem
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const ang = (Math.PI / 4) * i;
+          const rr = i % 2 === 0 ? e.r * 0.34 : e.r * 0.13;
+          const px = Math.cos(ang) * rr, py = Math.sin(ang) * rr;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = '#8a5a00cc';
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    if (state !== 'start') {
+      drawPirate(ship.x, ship.y, ship.vy);
+    } else {
+      drawPirate(W * 0.24, H * 0.4 + Math.sin(t * 2) * 8, 0);
+    }
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    t += 0;
+    if (state === 'playing') update(dt);
+    if (state === 'start') t += dt;
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+<!-- games:back-button -->
+<a href="index.html" id="games-home-btn" aria-label="Back to games index"><span aria-hidden="true">←</span> Home</a>
+<style>
+  #games-home-btn {
+    position: fixed; top: 1rem; left: 1rem; z-index: 99999;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.95rem; border-radius: 999px;
+    background: rgba(0,0,0,0.55); color: #fff;
+    font: 700 0.9rem/1 ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+    text-decoration: none; border: 1px solid rgba(255,255,255,0.25);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: transform .2s cubic-bezier(.2,.9,.3,1.4), background .2s, box-shadow .2s;
+  }
+  #games-home-btn:hover {
+    transform: translateX(-4px) scale(1.05);
+    background: linear-gradient(135deg, #ff006e, #8338ec);
+    box-shadow: 0 8px 24px rgba(255,0,110,.45);
+  }
+  #games-home-btn span { font-size: 1.15rem; line-height: 1; }
+</style>
+</body>
+</html>
