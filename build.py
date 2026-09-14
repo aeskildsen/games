@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate a delightfully unhinged index.html for the vibe-coded games."""
 
 import hashlib
@@ -21,7 +20,7 @@ class MetaExtractor(HTMLParser):
         elif tag == "meta":
             a = dict(attrs)
             if a.get("name") == "description" and a.get("content"):
-                self.description = a["content"].strip()
+                self.description = a["content"].strip()  # type: ignore
 
     def handle_endtag(self, tag):
         if tag == "title":
